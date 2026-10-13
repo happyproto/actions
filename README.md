@@ -9,6 +9,9 @@ GitHub Actions for [HappyProto](https://happyproto.at).
 
 Both run on Linux and macOS runners. Pin the major version, e.g. `@v1`.
 
+`hpy` has only alpha releases so far, so the examples below set the channel
+to `alpha`. Drop that once `hpy` 1.0.0 is out.
+
 ## Credentials
 
 Publishing acts as your atproto account. Sign in once on your own machine and
@@ -52,6 +55,7 @@ Installs `hpy` (as `setup-hpy` does) and publishes the plugin in
     credential: ${{ secrets.HPY_CREDENTIAL }}
     working-directory: plugins/my-plugin
     wasm: ../../target/wasm32-unknown-unknown/release/my_plugin.wasm
+    hpy-channel: alpha
 ```
 
 | Input | Default | |
@@ -84,6 +88,7 @@ a release:
   with:
     version: ${{ steps.release.outputs.new-release-version }}
     credential: ${{ secrets.HPY_CREDENTIAL }}
+    hpy-channel: alpha
 ```
 
 In a monorepo set up with `semantic-release-monorepo`, `new-release-version`

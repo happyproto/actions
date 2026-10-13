@@ -182,12 +182,15 @@ follows when a release was cut. Changes:
   uploads — so there is one place that names it. A `release/` test asserts
   every plugin's `.releaserc.json` names exactly one `.wasm` asset and lists
   `semantic-release-export-data`.
-- **Recovery.** If the registry publish fails after the GitHub release was
-  cut, rerunning the job won't help: semantic-release finds nothing new. A
-  `workflow_dispatch` workflow (`publish-plugin.yml`, inputs `plugin` and
-  `version`) checks out tag `happyview-<plugin>-v<version>`, builds that
-  plugin, and runs `plugin-publish` with the same inputs. `skip-existing`
-  makes it safe to run twice.
+- **Recovery and backfill.** If the registry publish fails after the GitHub
+  release was cut, rerunning the job won't help: semantic-release finds
+  nothing new. A `workflow_dispatch` workflow (`publish-plugin.yml`, inputs
+  `plugin` and `version`) checks out the default branch (for `hpy.toml` and
+  the tooling, which older tags lack), downloads that release's own `.wasm`
+  and `manifest.json` into the plugin's directory, and runs `plugin-publish`
+  with them, so the registry gets the exact bytes people already download.
+  The same workflow publishes releases made before registry publishing
+  existed. `skip-existing` makes it safe to run twice.
 - Repository secret `HPY_CREDENTIAL`: from `hpy registry login --export`,
   signed in as the account that owns the plugins' registry profiles.
 

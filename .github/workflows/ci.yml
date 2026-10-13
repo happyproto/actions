@@ -55,7 +55,10 @@ jobs:
         with:
           version: 1.0.0-alpha.2
           credential: not-a-credential
-      - run: test "${{ steps.bad-credential.outcome }}" = failure
+      # It failed at the credential, not before: hpy was installed.
+      - run: |
+          test "${{ steps.bad-credential.outcome }}" = failure
+          test "$(hpy --version)" = "hpy 1.0.0-alpha.2"
 
   plugin-publish:
     needs: test
@@ -73,7 +76,11 @@ jobs:
           credential: not-a-credential
           dry-run: true
           hpy-version: 1.0.0-alpha.2
-      - run: test "${{ steps.publish.outcome }}" = failure
+      # It failed at the credential, not before: the setup script was found
+      # by its path from plugin-publish and installed hpy.
+      - run: |
+          test "${{ steps.publish.outcome }}" = failure
+          test "$(hpy --version)" = "hpy 1.0.0-alpha.2"
 
   commitlint:
     if: github.event_name == 'pull_request'
