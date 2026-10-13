@@ -1,0 +1,47 @@
+name: Set up hpy
+description: Install hpy, the HappyProto command line, and optionally check a registry credential.
+author: HappyProto
+branding:
+  icon: download
+  color: purple
+
+inputs:
+  version:
+    description: An exact hpy version (e.g. 1.0.0-alpha.2), or `latest`.
+    required: false
+    default: latest
+  channel:
+    description: stable, beta or alpha — which channel `latest` means. Ignored with an exact version.
+    required: false
+    default: stable
+  credential:
+    description: An HPY_CREDENTIAL from `hpy registry login --export`. Checked, never exported to later steps.
+    required: false
+    default: ""
+  github-token:
+    description: Used only to look up releases when `version` is `latest`.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: The installed hpy version.
+    value: ${{ steps.setup.outputs.version }}
+  did:
+    description: The DID the credential signs in as; empty without one.
+    value: ${{ steps.setup.outputs.did }}
+  handle:
+    description: The handle the credential signs in as; empty without one.
+    value: ${{ steps.setup.outputs.handle }}
+
+runs:
+  using: composite
+  steps:
+    - id: setup
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        CHANNEL: ${{ inputs.channel }}
+        CREDENTIAL: ${{ inputs.credential }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: '"$GITHUB_ACTION_PATH/setup.sh"'
