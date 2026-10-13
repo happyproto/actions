@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shellcheck
+        run: shellcheck -x setup-hpy/*.sh plugin-publish/*.sh test/*.sh
+      - name: Unit tests
+        run: for t in test/*.test.sh; do echo "== $t"; bash "$t" || exit 1; done
+
+  setup-hpy:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Latest on the alpha channel
+        id: latest
+        uses: ./setup-hpy
+        with:
+          channel: alpha
+      - name: hpy is on PATH for later steps
+        env:
+          VERSION: ${{ steps.latest.outputs.version }}
+        run: |
+          case "$VERSION" in *-alpha.*) ;; *) echo "::error::not an alpha: $VERSION"; exit 1 ;; esac
+          test "$(hpy --version)" = "hpy $VERSION"
+
+      - name: An exact version
+        id: exact
+        uses: ./setup-hpy
+        with:
+          version: v1.0.0-alpha.2
+      - run: test "$(hpy --version)" = "hpy 1.0.0-alpha.2"
+
+      - name: A malformed credential fails
+        id: bad-credential
+        continue-on-error: true
+        uses: ./setup-hpy
+        with:
+          version: 1.0.0-alpha.2
+          credential: not-a-credential
+      - run: test "${{ steps.bad-credential.outcome }}" = failure
+
+  plugin-publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No real credential here: a bad one must stop the action before it
+      # reaches the registry. Real publishes happen in happyproto/plugins.
+      - name: A malformed credential stops before publishing
+        id: publish
+        continue-on-error: true
+        uses: ./plugin-publish
+        with:
+          version: 0.0.1
+          credential: not-a-credential
+          dry-run: true
+          hpy-version: 1.0.0-alpha.2
+      - run: test "${{ steps.publish.outcome }}" = failure
+
+  commitlint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+
+  release:
+    needs: [test, setup-hpy, plugin-publish]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Release
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
+      # Consumers pin the major version, e.g. @v1.
+      - name: Move the major version tag
+        if: steps.release.outputs.new-release-published == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.new-release-version }}
+        run: |
+          major="v${VERSION%%.*}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa "$major" -m "$major is v$VERSION"
+          git push --force origin "$major"
