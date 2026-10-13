@@ -1,0 +1,85 @@
+name: Publish a HappyView plugin
+description: Publish a HappyView plugin release to the HappyProto registry with hpy.
+author: HappyProto
+branding:
+  icon: upload-cloud
+  color: purple
+
+inputs:
+  version:
+    description: The plugin version to publish.
+    required: true
+  credential:
+    description: An HPY_CREDENTIAL from `hpy registry login --export`. Given to hpy alone.
+    required: true
+  working-directory:
+    description: The plugin's directory, where hpy.toml and manifest.json are.
+    required: false
+    default: .
+  wasm:
+    description: The built module, relative to working-directory. Omitted, hpy finds it.
+    required: false
+    default: ""
+  wait:
+    description: Wait until the registry has copied the artifact and the release is active.
+    required: false
+    default: "true"
+  dry-run:
+    description: Validate and print the record without publishing.
+    required: false
+    default: "false"
+  skip-existing:
+    description: When the registry already has this version, succeed with a notice instead of failing.
+    required: false
+    default: "true"
+  hpy-version:
+    description: The hpy to use (setup-hpy's `version`).
+    required: false
+    default: latest
+  hpy-channel:
+    description: Which channel `latest` means for hpy-version (setup-hpy's `channel`).
+    required: false
+    default: stable
+  github-token:
+    description: Used only to look up hpy releases.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  published:
+    description: "`true` if this run published; `false` if it skipped or was a dry run."
+    value: ${{ steps.publish.outputs.published }}
+  uri:
+    description: The release's AT URI; empty when skipped or a dry run.
+    value: ${{ steps.publish.outputs.uri }}
+  status:
+    description: The release's registry status.
+    value: ${{ steps.publish.outputs.status }}
+  hpy-version:
+    description: The hpy that ran.
+    value: ${{ steps.setup.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    # setup-hpy's own script, from this same ref: `uses: ./setup-hpy` would
+    # resolve against the caller's checkout instead.
+    - id: setup
+      shell: bash
+      env:
+        VERSION: ${{ inputs.hpy-version }}
+        CHANNEL: ${{ inputs.hpy-channel }}
+        CREDENTIAL: ${{ inputs.credential }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: '"$GITHUB_ACTION_PATH/../setup-hpy/setup.sh"'
+    - id: publish
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        CREDENTIAL: ${{ inputs.credential }}
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        WASM: ${{ inputs.wasm }}
+        WAIT: ${{ inputs.wait }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        SKIP_EXISTING: ${{ inputs.skip-existing }}
+      run: '"$GITHUB_ACTION_PATH/publish.sh"'
