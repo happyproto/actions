@@ -6,6 +6,7 @@ GitHub Actions for [HappyProto](https://happyproto.at).
 | --- | --- |
 | [`setup-hpy`](#setup-hpy) | Installs `hpy`, the HappyProto command line. |
 | [`plugin-publish`](#plugin-publish) | Publishes a HappyView plugin release to the HappyProto registry. |
+| [`lexicon-publish`](#lexicon-publish) | Publishes a directory of atproto lexicons so a PDS can resolve them. |
 
 Both run on Linux and macOS runners. Pin the major version, e.g. `@v1`.
 
@@ -95,11 +96,39 @@ In a monorepo set up with `semantic-release-monorepo`, `new-release-version`
 is the whole tag (`my-plugin-v1.2.0`), not the version: strip the prefix from
 `new-release-git-tag` instead.
 
+## `lexicon-publish`
+
+Publishes every lexicon under `lexicons-dir` as a `com.atproto.lexicon.schema`
+record in one account's repo, with Bluesky's
+[`goat`](https://github.com/bluesky-social/goat), adding new schemas and
+updating changed ones. A PDS finds a lexicon through DNS: a TXT record at
+`_lexicon.<authority>` names the DID whose repo holds it, so
+`at.happyproto.plugin.release` resolves through `_lexicon.plugin.happyproto.at`.
+
+`goat` skips an NSID whose DNS doesn't name the account and still succeeds, so
+the action checks first: if any authority's record is missing or names another
+DID, it fails and prints each TXT record to add.
+
+```yaml
+- uses: happyproto/actions/lexicon-publish@v1
+  with:
+    identifier: happyproto.at
+    password: ${{ secrets.LEXICON_APP_PASSWORD }}
+```
+
+| Input | Default | |
+| --- | --- | --- |
+| `identifier` | | Required. Handle or DID of the account the lexicons belong to. |
+| `password` | | An app password for that account. Not needed for a dry run. |
+| `lexicons-dir` | `lexicons` | The lexicon files, laid out by NSID. |
+| `dry-run` | `false` | Check DNS and report what would change (`goat lex status`), without publishing. |
+| `goat-version` | `0.2.6` | The `goat` release to use, checked against its published checksums. |
+
 ## Development
 
 ```sh
 for t in test/*.test.sh; do bash "$t"; done   # unit tests
-shellcheck -x setup-hpy/*.sh plugin-publish/*.sh test/*.sh
+shellcheck -x setup-hpy/*.sh plugin-publish/*.sh lexicon-publish/*.sh test/*.sh
 ```
 
 CI runs the unit tests, then the actions themselves on Ubuntu and macOS.

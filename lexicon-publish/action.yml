@@ -1,0 +1,42 @@
+name: Publish lexicons
+description: Publish a directory of atproto lexicons as schema records, after checking every authority's _lexicon DNS names the account.
+author: HappyProto
+branding:
+  icon: book-open
+  color: purple
+
+inputs:
+  identifier:
+    description: Handle or DID of the account the lexicons belong to, which _lexicon DNS must name.
+    required: true
+  password:
+    description: An app password for that account. Not needed for a dry run.
+    required: false
+    default: ""
+  lexicons-dir:
+    description: The lexicon files, laid out by NSID.
+    required: false
+    default: lexicons
+  dry-run:
+    description: Check DNS and report what would change, without publishing.
+    required: false
+    default: "false"
+  goat-version:
+    description: The goat release to publish with.
+    required: false
+    default: "0.2.6"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GOAT_VERSION: ${{ inputs.goat-version }}
+      run: '"$GITHUB_ACTION_PATH/install-goat.sh"'
+    - shell: bash
+      env:
+        IDENTIFIER: ${{ inputs.identifier }}
+        PASSWORD: ${{ inputs.password }}
+        LEXICONS_DIR: ${{ inputs.lexicons-dir }}
+        DRY_RUN: ${{ inputs.dry-run }}
+      run: '"$GITHUB_ACTION_PATH/publish.sh"'
