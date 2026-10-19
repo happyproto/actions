@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Shellcheck
-        run: shellcheck -x setup-hpy/*.sh plugin-publish/*.sh test/*.sh
+        run: shellcheck -x setup-hpy/*.sh plugin-publish/*.sh lexicon-publish/*.sh test/*.sh
       - name: Unit tests
         run: for t in test/*.test.sh; do echo "== $t"; bash "$t" || exit 1; done
 
@@ -96,8 +96,32 @@ jobs:
       - run: npm ci
       - run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
 
+  lexicon-publish:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # example.com has no _lexicon records, so the DNS check must stop the
+      # action, naming the record to add, before anything is published.
+      - name: Missing DNS stops the action before publishing
+        id: dry-run
+        continue-on-error: true
+        uses: ./lexicon-publish
+        with:
+          identifier: bsky.app
+          lexicons-dir: test/fixtures/lexicons
+          dry-run: true
+      # It failed at DNS, not before: goat was installed from the release.
+      - run: |
+          test "${{ steps.dry-run.outcome }}" = failure
+          goat --version | grep -q "0.2.6"
+
   release:
-    needs: [test, setup-hpy, plugin-publish]
+    needs: [test, setup-hpy, plugin-publish, lexicon-publish]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
