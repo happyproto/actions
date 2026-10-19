@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/happyproto/actions/compare/v1.0.0...v1.1.0) (2026-10-19)
+
+
+### Features
+
+* lexicon-publish publishes lexicons once their DNS names the account ([200a7ef](https://github.com/happyproto/actions/commit/200a7ef92c834f0e43b72f58ec78b1bea3b9ca28))
+
 # 1.0.0 (2026-10-13)
 
 
