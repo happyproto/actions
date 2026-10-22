@@ -10,8 +10,8 @@ GitHub Actions for [HappyProto](https://happyproto.at).
 
 Both run on Linux and macOS runners. Pin the major version, e.g. `@v1`.
 
-`hpy` has only alpha releases so far, so the examples below set the channel
-to `alpha`. Drop that once `hpy` 1.0.0 is out.
+`hpy` has only prereleases so far, so the examples below set the channel to
+`beta`. Drop that once `hpy` 1.0.0 is out.
 
 ## Credentials
 
@@ -32,7 +32,7 @@ HappyView dashboard. If it expires or is revoked, publishing fails with
 ```yaml
 - uses: happyproto/actions/setup-hpy@v1
   with:
-    channel: alpha
+    channel: beta
 ```
 
 | Input | Default | |
@@ -56,7 +56,7 @@ Installs `hpy` (as `setup-hpy` does) and publishes the plugin in
     credential: ${{ secrets.HPY_CREDENTIAL }}
     working-directory: plugins/my-plugin
     wasm: ../../target/wasm32-unknown-unknown/release/my_plugin.wasm
-    hpy-channel: alpha
+    hpy-channel: beta
 ```
 
 | Input | Default | |
@@ -89,7 +89,7 @@ a release:
   with:
     version: ${{ steps.release.outputs.new-release-version }}
     credential: ${{ secrets.HPY_CREDENTIAL }}
-    hpy-channel: alpha
+    hpy-channel: beta
 ```
 
 In a monorepo set up with `semantic-release-monorepo`, `new-release-version`
