@@ -29,16 +29,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Latest on the alpha channel
+      - name: Latest on the beta channel
         id: latest
         uses: ./setup-hpy
         with:
-          channel: alpha
+          channel: beta
       - name: hpy is on PATH for later steps
         env:
           VERSION: ${{ steps.latest.outputs.version }}
         run: |
-          case "$VERSION" in *-alpha.*) ;; *) echo "::error::not an alpha: $VERSION"; exit 1 ;; esac
+          case "$VERSION" in *-beta.*) ;; *) echo "::error::not a beta: $VERSION"; exit 1 ;; esac
           test "$(hpy --version)" = "hpy $VERSION"
 
       - name: An exact version
