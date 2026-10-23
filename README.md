@@ -65,13 +65,16 @@ Installs `hpy` (as `setup-hpy` does) and publishes the plugin in
 | `credential` | | Required. Passed to `hpy` alone. |
 | `working-directory` | `.` | Where `hpy.toml` and `manifest.json` are. |
 | `wasm` | | The built module, relative to `working-directory`. Omitted, `hpy` finds it. |
+| `track` | | `latest`, `beta` or `alpha`: the release track to publish to. Omitted, `hpy` uses its default. |
 | `wait` | `true` | Wait until the registry has copied the artifact. Still `pending` after two minutes is a warning, not a failure. |
 | `dry-run` | `false` | Validate and print the record without publishing. |
 | `skip-existing` | `true` | When the registry already has this version, succeed with a notice. Versions are immutable, so the existing one is not compared with this build. |
 | `hpy-version`, `hpy-channel` | `latest`, `stable` | Which `hpy` to use. |
 | `github-token` | `github.token` | Only for looking up `hpy` releases. |
 
-Outputs: `published` (`true`/`false`), `uri`, `status`, `hpy-version`.
+Outputs: `published` (`true`/`false`), `uri` (the version's AT URI, empty when
+skipped or a dry run), `status` (the version's availability: `available` or
+`pending`; for a skipped run, what the registry already reported), `hpy-version`.
 
 ### With semantic-release
 
