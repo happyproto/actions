@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/happyproto/actions/compare/v1.1.0...v1.2.0) (2026-10-27)
+
+
+### Features
+
+* publish to the software.release registry with a track ([16722ef](https://github.com/happyproto/actions/commit/16722ef23b5cf92f4e9950123dab7bf8e3168513))
+
 # [1.1.0](https://github.com/happyproto/actions/compare/v1.0.0...v1.1.0) (2026-10-19)
 
 
