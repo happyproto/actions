@@ -106,7 +106,7 @@ record in one account's repo, with Bluesky's
 [`goat`](https://github.com/bluesky-social/goat), adding new schemas and
 updating changed ones. A PDS finds a lexicon through DNS: a TXT record at
 `_lexicon.<authority>` names the DID whose repo holds it, so
-`at.happyproto.plugin.release` resolves through `_lexicon.plugin.happyproto.at`.
+`at.happyproto.registry.project` resolves through `_lexicon.registry.happyproto.at`.
 
 `goat` skips an NSID whose DNS doesn't name the account and still succeeds, so
 the action checks first: if any authority's record is missing or names another
