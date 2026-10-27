@@ -28,15 +28,15 @@ esac
 STUB
   chmod +x "$WORK/bin/hpy"
   : > "$WORK/calls.log"
-  echo '{"slug": "my-plugin", "package": "active", "releases": []}' > "$WORK/status.json"
-  echo '{"uri": "at://did:plc:me/at.happyproto.plugin.release/my-plugin:1.2.0", "cid": "bafy", "createdProfile": false, "registryStatus": "active"}' > "$WORK/publish.json"
+  echo '{"name": "my-plugin", "project": null, "versions": []}' > "$WORK/status.json"
+  echo '{"uri": "at://did:plc:me/software.release.version/my-plugin:1.2.0", "cid": "bafy", "createdProject": false, "resumed": false, "availability": "available"}' > "$WORK/publish.json"
 }
 
 # Runs publish.sh with the action's defaults, overridden by NAME=value args.
 run_publish() {
   env PATH="$WORK/bin:$PATH" GITHUB_OUTPUT="$WORK/output" GITHUB_STEP_SUMMARY="$WORK/summary" \
     GITHUB_ENV="$WORK/env" VERSION=1.2.0 CREDENTIAL=secret-credential WORKING_DIRECTORY=. \
-    WASM= WAIT=true DRY_RUN=false SKIP_EXISTING=true "$@" "$publish"
+    WASM= TRACK= WAIT=true DRY_RUN=false SKIP_EXISTING=true "$@" "$publish"
 }
 
 test_publishes_with_the_flags_ci_needs() {
@@ -47,9 +47,21 @@ test_publishes_with_the_flags_ci_needs() {
   assert_contains "$calls" "registry plugin status --json"
   assert_contains "$calls" "registry plugin publish --no-input --yes --no-build --json --version 1.2.0 --wasm ../target/my_plugin.wasm --wait"
   assert_contains "$(cat "$WORK/output")" "published=true"
-  assert_contains "$(cat "$WORK/output")" "uri=at://did:plc:me/at.happyproto.plugin.release/my-plugin:1.2.0"
-  assert_contains "$(cat "$WORK/output")" "status=active"
+  assert_contains "$(cat "$WORK/output")" "uri=at://did:plc:me/software.release.version/my-plugin:1.2.0"
+  assert_contains "$(cat "$WORK/output")" "status=available"
   assert_contains "$(cat "$WORK/summary")" "Published at://"
+}
+
+test_a_track_is_passed_to_publish() {
+  stub_hpy
+  run_publish TRACK=beta >/dev/null || fail "publish failed"
+  assert_contains "$(grep publish "$WORK/calls.log")" "--version 1.2.0 --track beta"
+}
+
+test_no_track_passes_no_flag() {
+  stub_hpy
+  run_publish TRACK= >/dev/null || fail "publish failed"
+  assert_not_contains "$(grep publish "$WORK/calls.log")" "--track"
 }
 
 test_without_wait_or_wasm_neither_flag_is_passed() {
@@ -76,22 +88,40 @@ test_runs_in_the_working_directory() {
   assert_contains "$(grep publish "$WORK/calls.log")" "$WORK/plugins/mine | registry plugin publish"
 }
 
-test_a_version_already_active_is_skipped() {
+test_a_version_already_available_is_skipped() {
   stub_hpy
-  echo '{"slug": "my-plugin", "releases": [{"version": "1.2.0", "registry": "active", "inRepo": true}]}' > "$WORK/status.json"
+  echo '{"name": "my-plugin", "versions": [{"version": "1.2.0", "availability": "available", "state": "active", "installable": true, "inRepo": true}]}' > "$WORK/status.json"
   local out
   out=$(run_publish) || fail "publish failed"
-  assert_contains "$out" "::notice::my-plugin 1.2.0 is already in the registry (active); skipping"
+  assert_contains "$out" "::notice::my-plugin 1.2.0 is already in the registry (available); skipping"
   assert_not_contains "$(cat "$WORK/calls.log")" "registry plugin publish"
   assert_contains "$(cat "$WORK/output")" "published=false"
+  assert_contains "$(cat "$WORK/output")" "status=available"
 }
 
-test_a_version_in_the_repo_but_refused_fails() {
+test_a_version_still_pending_is_skipped() {
   stub_hpy
-  echo '{"slug": "my-plugin", "releases": [{"version": "1.2.0", "registry": "not indexed", "inRepo": true}]}' > "$WORK/status.json"
+  echo '{"name": "my-plugin", "versions": [{"version": "1.2.0", "availability": "pending", "state": "active", "installable": false, "inRepo": true}]}' > "$WORK/status.json"
+  local out
+  out=$(run_publish) || fail "publish failed"
+  assert_contains "$out" "::notice::my-plugin 1.2.0 is already in the registry (pending); skipping"
+  assert_not_contains "$(cat "$WORK/calls.log")" "registry plugin publish"
+}
+
+test_a_version_in_the_repo_but_not_indexed_is_published() {
+  stub_hpy
+  echo '{"name": "my-plugin", "versions": [{"version": "1.2.0", "availability": "not indexed", "state": "active", "installable": false, "inRepo": true}]}' > "$WORK/status.json"
+  run_publish >/dev/null || fail "publish failed"
+  assert_contains "$(cat "$WORK/calls.log")" "registry plugin publish"
+  assert_contains "$(cat "$WORK/output")" "published=true"
+}
+
+test_a_version_deleted_at_source_fails() {
+  stub_hpy
+  echo '{"name": "my-plugin", "versions": [{"version": "1.2.0", "availability": "deletedAtSource", "state": "active", "installable": false, "inRepo": false}]}' > "$WORK/status.json"
   local out
   out=$(run_publish) && fail "expected failure"
-  assert_contains "$out" "::error::my-plugin 1.2.0 is in your repo, but the registry reports \`not indexed\`"
+  assert_contains "$out" "::error::my-plugin 1.2.0 is in the registry, but it reports \`deletedAtSource\`"
   assert_not_contains "$(cat "$WORK/calls.log")" "registry plugin publish"
 }
 
@@ -112,9 +142,9 @@ test_a_dry_run_never_checks_status() {
   assert_contains "$(cat "$WORK/output")" "published=false"
 }
 
-test_waiting_that_ends_short_of_active_warns() {
+test_waiting_that_ends_short_of_available_warns() {
   stub_hpy
-  echo '{"uri": "at://did:plc:me/at.happyproto.plugin.release/my-plugin:1.2.0", "registryStatus": "pending"}' > "$WORK/publish.json"
+  echo '{"uri": "at://did:plc:me/software.release.version/my-plugin:1.2.0", "availability": "pending"}' > "$WORK/publish.json"
   local out
   out=$(run_publish) || fail "publish failed"
   assert_contains "$out" "::warning::"

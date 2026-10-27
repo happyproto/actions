@@ -20,8 +20,12 @@ inputs:
     description: The built module, relative to working-directory. Omitted, hpy finds it.
     required: false
     default: ""
+  track:
+    description: The release track to publish to (latest, beta or alpha). Omitted, hpy's default.
+    required: false
+    default: ""
   wait:
-    description: Wait until the registry has copied the artifact and the release is active.
+    description: Wait until the registry has copied the artifact and the version is available.
     required: false
     default: "true"
   dry-run:
@@ -50,10 +54,10 @@ outputs:
     description: "`true` if this run published; `false` if it skipped or was a dry run."
     value: ${{ steps.publish.outputs.published }}
   uri:
-    description: The release's AT URI; empty when skipped or a dry run.
+    description: The version's AT URI; empty when skipped or a dry run.
     value: ${{ steps.publish.outputs.uri }}
   status:
-    description: The release's registry status.
+    description: The version's availability in the registry (`available`, `pending`); empty for a dry run.
     value: ${{ steps.publish.outputs.status }}
   hpy-version:
     description: The hpy that ran.
@@ -79,6 +83,7 @@ runs:
         CREDENTIAL: ${{ inputs.credential }}
         WORKING_DIRECTORY: ${{ inputs.working-directory }}
         WASM: ${{ inputs.wasm }}
+        TRACK: ${{ inputs.track }}
         WAIT: ${{ inputs.wait }}
         DRY_RUN: ${{ inputs.dry-run }}
         SKIP_EXISTING: ${{ inputs.skip-existing }}
