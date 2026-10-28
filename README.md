@@ -124,8 +124,31 @@ DID, it fails and prints each TXT record to add.
 | `identifier` | | Required. Handle or DID of the account the lexicons belong to. |
 | `password` | | An app password for that account. Not needed for a dry run. |
 | `lexicons-dir` | `lexicons` | The lexicon files, laid out by NSID. |
+| `include` | | NSID prefixes to publish, comma or newline separated. Empty publishes them all. |
+| `exclude` | | NSID prefixes to leave out, applied after `include`. |
 | `dry-run` | `false` | Check DNS and report what would change (`goat lex status`), without publishing. |
 | `goat-version` | `0.2.6` | The `goat` release to use, checked against its published checksums. |
+
+### Several accounts in one tree
+
+When one tree holds lexicons for more than one account, run the action once per
+account and split the tree with `include` and `exclude`. A prefix matches whole
+segments: `dev.happyview` covers `dev.happyview.adminFull`, never
+`dev.happyviewer.thing`. Only the selected lexicons are checked against DNS and
+given to `goat`.
+
+```yaml
+- uses: happyproto/actions/lexicon-publish@v1
+  with:
+    identifier: happyproto.at
+    exclude: dev.happyview
+    password: ${{ secrets.LEXICON_APP_PASSWORD }}
+- uses: happyproto/actions/lexicon-publish@v1
+  with:
+    identifier: happyview.dev
+    include: dev.happyview
+    password: ${{ secrets.HAPPYVIEW_DEV_LEXICON_APP_PASSWORD }}
+```
 
 ## Development
 

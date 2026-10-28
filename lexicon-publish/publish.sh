@@ -13,6 +13,14 @@
 #   PASSWORD      an app password for it; not needed for a dry run
 #   LEXICONS_DIR  the lexicon files, laid out by NSID (default lexicons)
 #   DRY_RUN       true: report what would change (goat lex status) instead
+#   INCLUDE       NSID prefixes to publish, comma or newline separated; empty
+#                 means all of them
+#   EXCLUDE       NSID prefixes to leave out, applied after INCLUDE
+#
+# A prefix matches whole segments: dev.happyview matches dev.happyview and
+# dev.happyview.adminFull, never dev.happyviewer.thing. With either filter set,
+# the selected files are copied to a temporary directory and goat is given that
+# copy, so it never sees a lexicon that wasn't checked.
 set -euo pipefail
 
 : "${IDENTIFIER:?the identifier input is required}"
@@ -26,14 +34,59 @@ elif [[ "$dry_run" != true ]]; then
   exit 1
 fi
 
-# Every lexicon's NSID. A JSON file without a lexicon `id` is not one.
-nsids=""
+# One prefix a line, without blanks or surrounding spaces.
+prefixes() {
+  tr ',' '\n' <<<"$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' || true
+}
+include=$(prefixes "${INCLUDE:-}")
+exclude=$(prefixes "${EXCLUDE:-}")
+
+matches() { # nsid prefixes
+  local prefix
+  while read -r prefix; do
+    [[ -n "$prefix" ]] || continue
+    if [[ "$1" == "$prefix" || "$1" == "$prefix".* ]]; then return 0; fi
+  done <<<"$2"
+  return 1
+}
+
+selected() { # nsid
+  if [[ -n "$include" ]] && ! matches "$1" "$include"; then return 1; fi
+  if [[ -n "$exclude" ]] && matches "$1" "$exclude"; then return 1; fi
+  return 0
+}
+
+# Every selected lexicon, as "<nsid> <file>". A JSON file without a lexicon
+# `id` is not one.
+lexicons=""
 if [[ -d "$dir" ]]; then
-  nsids=$(find "$dir" -name '*.json' -type f -exec jq -r 'select(.lexicon != null) | .id // empty' {} + | sort -u)
+  while IFS= read -r file; do
+    nsid=$(jq -r 'select(.lexicon != null) | .id // empty' "$file")
+    if [[ -n "$nsid" ]] && selected "$nsid"; then
+      lexicons+="$nsid $file"$'\n'
+    fi
+  done < <(find "$dir" -name '*.json' -type f | sort)
 fi
+nsids=$(cut -d' ' -f1 <<<"$lexicons" | grep -v '^$' | sort -u || true)
 if [[ -z "$nsids" ]]; then
-  echo "::error::no lexicons under $dir"
+  filters="${include:+ include: $(tr '\n' ' ' <<<"$include")}${exclude:+ exclude: $(tr '\n' ' ' <<<"$exclude")}"
+  echo "::error::no lexicons under $dir${filters:+ match${filters}}"
   exit 1
+fi
+
+# goat publishes a whole directory, so a filtered run gives it a copy holding
+# only the selected files, laid out as they were.
+publish_dir="$dir"
+if [[ -n "$include$exclude" ]]; then
+  publish_dir=$(mktemp -d)
+  trap 'rm -rf "$publish_dir"' EXIT
+  while read -r _ file; do
+    [[ -n "$file" ]] || continue
+    rel="${file#"$dir"/}"
+    mkdir -p "$publish_dir/$(dirname "$rel")"
+    cp "$file" "$publish_dir/$rel"
+  done <<<"$lexicons"
+  echo "Publishing $(wc -l <<<"$nsids" | tr -d ' ') of the lexicons under $dir"
 fi
 
 # An NSID's authority is its domain: every segment but the name, reversed.
@@ -64,8 +117,8 @@ fi
 echo "Every authority's DNS names $did: $(echo "$authorities" | tr '\n' ' ')"
 
 if [[ "$dry_run" == true ]]; then
-  goat lex status --lexicons-dir "$dir"
+  goat lex status --lexicons-dir "$publish_dir"
 else
   GOAT_USERNAME="$IDENTIFIER" GOAT_PASSWORD="$PASSWORD" \
-    goat lex publish --update --lexicons-dir "$dir"
+    goat lex publish --update --lexicons-dir "$publish_dir"
 fi
