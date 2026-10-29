@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/happyproto/actions/compare/v1.2.0...v1.3.0) (2026-10-29)
+
+
+### Features
+
+* let lexicon-publish include or exclude nsid prefixes ([9fada87](https://github.com/happyproto/actions/commit/9fada8792a0e1159b33468b9c58252aac75f2ea4))
+
 # [1.2.0](https://github.com/happyproto/actions/compare/v1.1.0...v1.2.0) (2026-10-27)
 
 
