@@ -17,6 +17,14 @@ inputs:
     description: The lexicon files, laid out by NSID.
     required: false
     default: lexicons
+  include:
+    description: NSID prefixes to publish, comma or newline separated, matching whole segments. Empty publishes every lexicon in the directory.
+    required: false
+    default: ""
+  exclude:
+    description: NSID prefixes to leave out, comma or newline separated, matching whole segments. Applied after include.
+    required: false
+    default: ""
   dry-run:
     description: Check DNS and report what would change, without publishing.
     required: false
@@ -39,4 +47,6 @@ runs:
         PASSWORD: ${{ inputs.password }}
         LEXICONS_DIR: ${{ inputs.lexicons-dir }}
         DRY_RUN: ${{ inputs.dry-run }}
+        INCLUDE: ${{ inputs.include }}
+        EXCLUDE: ${{ inputs.exclude }}
       run: '"$GITHUB_ACTION_PATH/publish.sh"'

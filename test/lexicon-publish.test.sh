@@ -26,6 +26,16 @@ if [[ "\$1" == resolve ]]; then
   [[ -f "$WORK/did" ]] || { echo "error: could not resolve \$2" >&2; exit 1; }
   printf '{"id": "%s"}\n' "\$(cat "$WORK/did")"
 fi
+# What goat was given to publish: the directory and the lexicon files in it.
+if [[ "\$1" == lex ]]; then
+  prev=""
+  for arg in "\$@"; do
+    [[ "\$prev" == --lexicons-dir ]] && dir="\$arg"
+    prev="\$arg"
+  done
+  echo "\$dir" > "$WORK/given.dir"
+  (cd "\$dir" && find . -name '*.json' -type f | sort) > "$WORK/given.list"
+fi
 STUB
   cat > "$WORK/bin/dig" <<STUB
 #!/usr/bin/env bash
@@ -135,6 +145,79 @@ test_the_password_is_masked_and_never_printed_otherwise() {
   out=$(run_publish 2>&1) || fail "publish failed"
   assert_contains "$out" "::add-mask::app-password-secret"
   assert_eq 1 "$(grep -c "app-password-secret" <<<"$out")" "mentions of the password"
+}
+
+test_exclude_leaves_a_namespace_out_of_the_dns_check_and_the_publish() {
+  stub_tools
+  echo "\"did=$DID\"" > "$WORK/dns/_lexicon.thing.example.com"
+  local out
+  out=$(run_publish EXCLUDE=com.example.other 2>&1) || fail "publish failed: $out"
+  assert_not_contains "$(cat "$WORK/calls.log")" "_lexicon.other.example.com" "lookups"
+  assert_eq "./com/example/thing/getRecord.json
+./com/example/thing/record.json" "$(cat "$WORK/given.list")" "published files"
+}
+
+test_include_publishes_only_that_namespace() {
+  stub_tools
+  echo "\"did=$DID\"" > "$WORK/dns/_lexicon.other.example.com"
+  local out
+  out=$(run_publish INCLUDE=com.example.other 2>&1) || fail "publish failed: $out"
+  assert_not_contains "$(cat "$WORK/calls.log")" "_lexicon.thing.example.com" "lookups"
+  assert_eq "./com/example/other/ping.json" "$(cat "$WORK/given.list")" "published files"
+}
+
+test_a_prefix_matches_whole_segments() {
+  stub_tools
+  echo "\"did=$DID\"" > "$WORK/dns/_lexicon.thing.example.com"
+  local out
+  out=$(run_publish EXCLUDE=com.example.oth 2>&1) && fail "expected failure"
+  assert_contains "$out" "_lexicon.other.example.com TXT"
+}
+
+test_lists_take_commas_newlines_and_exact_nsids() {
+  stub_tools
+  dns_for_all
+  local out
+  out=$(run_publish EXCLUDE="com.example.other, 
+com.example.thing.getRecord" 2>&1) || fail "publish failed: $out"
+  assert_eq "./com/example/thing/record.json" "$(cat "$WORK/given.list")" "published files"
+}
+
+test_include_and_exclude_combine() {
+  stub_tools
+  dns_for_all
+  local out
+  out=$(run_publish INCLUDE=com.example.thing EXCLUDE=com.example.thing.record 2>&1) ||
+    fail "publish failed: $out"
+  assert_eq "./com/example/thing/getRecord.json" "$(cat "$WORK/given.list")" "published files"
+}
+
+test_a_filter_that_leaves_nothing_fails() {
+  stub_tools
+  dns_for_all
+  local out
+  out=$(run_publish INCLUDE=org.nothing 2>&1) && fail "expected failure"
+  assert_contains "$out" "no lexicons"
+  assert_contains "$out" "org.nothing"
+  assert_not_contains "$(cat "$WORK/calls.log")" "goat lex"
+}
+
+test_a_filtered_dry_run_reports_only_the_selected_lexicons() {
+  stub_tools
+  echo "\"did=$DID\"" > "$WORK/dns/_lexicon.other.example.com"
+  run_publish DRY_RUN=true PASSWORD= INCLUDE=com.example.other >/dev/null 2>&1 || fail "dry run failed"
+  assert_contains "$(cat "$WORK/calls.log")" "goat lex status --lexicons-dir"
+  assert_eq "./com/example/other/ping.json" "$(cat "$WORK/given.list")" "reported files"
+}
+
+test_the_filtered_copy_is_removed_afterwards() {
+  stub_tools
+  dns_for_all
+  run_publish EXCLUDE=com.example.other >/dev/null 2>&1 || fail "publish failed"
+  local given
+  given=$(cat "$WORK/given.dir")
+  [[ "$given" != "$WORK/lexicons" ]] || fail "published the source directory, not a filtered copy"
+  [[ ! -e "$given" ]] || fail "$given was left behind"
 }
 
 test_a_directory_with_no_lexicons_fails() {
