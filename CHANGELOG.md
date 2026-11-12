@@ -1,3 +1,17 @@
+# [1.4.0](https://github.com/happyproto/actions/compare/v1.3.0...v1.4.0) (2026-11-12)
+
+
+### Bug Fixes
+
+* fail when a channel points at an unreadable version in release-publish ([2b24ba1](https://github.com/happyproto/actions/commit/2b24ba164f76e4119d5e0ee724fe55cdde523742))
+* require the publisher DID in release-publish ([34d1a4d](https://github.com/happyproto/actions/commit/34d1a4d65a155c0937cd7485c02eb9c09d4f6f24))
+
+
+### Features
+
+* add release-publish to publish software.release records ([a109fd2](https://github.com/happyproto/actions/commit/a109fd2d5361b7dd3571613533f3c95a5fac0f54))
+* publish a batch of releases from a JSON file in release-publish ([aff99d7](https://github.com/happyproto/actions/commit/aff99d7217ac8b5abe28aeae411fc4bd1e1d8273))
+
 # [1.3.0](https://github.com/happyproto/actions/compare/v1.2.0...v1.3.0) (2026-10-29)
 
 
