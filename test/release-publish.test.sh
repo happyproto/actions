@@ -93,7 +93,9 @@ if parts.netloc != "pds.test":
 if xrpc == "com.atproto.server.createSession":
     if body.get("password") != "app-password-secret":
         err(401, "AuthenticationRequired", "Invalid identifier or password")
-    reply(200, {"did": "$DID", "handle": "$HANDLE", "accessJwt": "access-jwt-secret", "refreshJwt": "refresh-jwt-secret"})
+    signed_in = os.path.join(work, "session-did")
+    session_did = open(signed_in).read().strip() if os.path.exists(signed_in) else "$DID"
+    reply(200, {"did": session_did, "handle": "$HANDLE", "accessJwt": "access-jwt-secret", "refreshJwt": "refresh-jwt-secret"})
 
 if xrpc == "com.atproto.repo.getRecord":
     p = path(query["repo"], query["collection"], query["rkey"])
@@ -324,6 +326,23 @@ test_a_publisher_mismatch_fails_before_anything_else() {
   assert_eq "" "$(jq -r 'select(.url | startswith("https://pds.test")) | .url' "$WORK/requests.jsonl")" "PDS calls"
 }
 
+test_publisher_did_is_required() {
+  stub_tools
+  local out
+  out=$(run_publish PUBLISHER_DID= 2>&1) && fail "expected failure"
+  assert_contains "$out" "::error::the publisher-did input is required"
+  assert_eq "" "$(cat "$WORK/requests.jsonl" 2>/dev/null)" "calls"
+}
+
+test_a_session_for_another_account_fails_without_writing() {
+  stub_tools
+  echo did:plc:someoneelse > "$WORK/session-did"
+  local out
+  out=$(run_publish 2>&1) && fail "expected failure"
+  assert_contains "$out" "::error::signed in as did:plc:someoneelse, not $DID"
+  assert_eq "" "$(writes)" "writes"
+}
+
 test_a_manifest_mismatch_fails_without_writing() {
   stub_tools
   seed software.release.manifest "$TID" bafyother "$(jq -n --arg p "$PROJECT_URI" '{
@@ -470,6 +489,9 @@ test_any_blob_shape_is_refused() {
   out=$(bash -c '. "$1"; refuse_blobs legacy "{\"a\": [{\"ref\": {\"\$link\": \"bafk\"}}]}"' _ "$publish" 2>&1) &&
     fail "accepted a ref.\$link"
   assert_contains "$out" "legacy would hold a blob"
+  out=$(bash -c '. "$1"; refuse_blobs legacy "{\"icon\": {\"cid\": \"bafk\", \"mimeType\": \"image/png\"}}"' _ "$publish" 2>&1) &&
+    fail "expected the legacy {cid, mimeType} blob shape to be refused"
+  assert_contains "$out" "legacy would hold a blob"
   bash -c '. "$1"; refuse_blobs ok "{\"ref\": \"refs/tags/v1\", \"x\": {\"\$type\": \"blobby\"}}"' _ "$publish" ||
     fail "refused a record without a blob"
 }
@@ -542,7 +564,7 @@ test_a_did_web_publisher() {
   mkdir -p "$WORK/web/web.test/.well-known"
   did_doc did:web:web.test web.test > "$WORK/web/web.test/.well-known/did.json"
   local out
-  out=$(run_publish IDENTIFIER=did:web:web.test PUBLISHER_DID= DRY_RUN=true 2>&1) || fail "dry run failed: $out"
+  out=$(run_publish IDENTIFIER=did:web:web.test PUBLISHER_DID=did:web:web.test DRY_RUN=true 2>&1) || fail "dry run failed: $out"
   assert_contains "$out" "in did:web:web.test ($PDS)"
 }
 

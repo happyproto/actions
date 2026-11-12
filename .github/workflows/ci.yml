@@ -136,6 +136,7 @@ jobs:
         uses: ./release-publish
         with:
           identifier: bsky.app
+          publisher-did: did:plc:z72i7hdynmk6r22z27h6tvur
           project: release-publish-ci
           version: 0.0.1-alpha.1
           repository: https://github.com/happyproto/actions.git
@@ -164,6 +165,7 @@ jobs:
         uses: ./release-publish
         with:
           identifier: bsky.app
+          publisher-did: did:plc:z72i7hdynmk6r22z27h6tvur
           project: release-publish-ci
           releases: ${{ env.RELEASES_FILE }}
       - env:

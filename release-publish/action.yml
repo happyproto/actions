@@ -14,9 +14,8 @@ inputs:
     required: false
     default: ""
   publisher-did:
-    description: The DID the identifier must resolve to. The action fails before reading or writing anything when it resolves elsewhere. Empty skips the check.
-    required: false
-    default: ""
+    description: The DID the identifier must resolve to, and the session must sign in as. The action fails before reading or writing anything when it resolves elsewhere. Required, so a credential for the wrong account can never write release records.
+    required: true
   project:
     description: The project name, also the project record's key.
     required: true

@@ -206,7 +206,7 @@ are no retries, so a rerun picks up where it stopped.
 | --- | --- | --- |
 | `identifier` | | Required. Handle or DID of the publishing account. |
 | `password` | | An app password for that account. Not needed for a dry run. |
-| `publisher-did` | | The DID `identifier` must resolve to; anything else fails before a record is read. |
+| `publisher-did` | yes | The DID `identifier` must resolve to and the session must sign in as; anything else fails before a record is read. Required, so a credential for the wrong account can never write release records. |
 | `project` | | Required. The project name and the project record's key. |
 | `version` | | Required unless `releases` is set. SemVer, with or without a leading `v`; no build metadata. |
 | `repository` | | Required unless `releases` is set. The cloneable git URL the release was built from. |

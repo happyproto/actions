@@ -18,7 +18,7 @@
 # Environment (the action's inputs):
 #   IDENTIFIER     handle or DID of the publishing account (required)
 #   PASSWORD       an app password for it; not needed for a dry run
-#   PUBLISHER_DID  the DID IDENTIFIER must resolve to; empty skips the check
+#   PUBLISHER_DID  the DID IDENTIFIER must resolve to; required
 #   PROJECT, VERSION, REPOSITORY, COMMIT   (required)
 #   TAG            the git tag; default v<version>
 #   CHANGELOG_URL  optional
@@ -211,8 +211,10 @@ channel_record() { # channel version-uri version-cid
 
 # refuse_blobs NAME JSON: these records never carry blobs; dies if one does.
 refuse_blobs() {
+  # A blob ref, an untyped ref, or the legacy {cid, mimeType} shape.
   if jq -e '[.. | objects | select(."$type" == "blob"
-      or ((.ref | type) == "object" and (.ref | has("$link"))))] | length > 0' <<<"$2" >/dev/null; then
+      or ((.ref | type) == "object" and (.ref | has("$link")))
+      or ((.cid | type) == "string" and (.mimeType | type) == "string"))] | length > 0' <<<"$2" >/dev/null; then
     die "$1 would hold a blob, and release records never do; nothing was written"
   fi
 }
@@ -539,6 +541,8 @@ load_release() {
 main() {
   : "${IDENTIFIER:?the identifier input is required}"
   : "${PROJECT:?the project input is required}"
+  [[ "${PUBLISHER_DID:-}" == did:* ]] ||
+    die "the publisher-did input is required: the DID release records must be written by"
   PLC_URL="${PLC_URL:-https://plc.directory}"
   DRY_RUN="${DRY_RUN:-true}"
   [[ "$DRY_RUN" == true || "$DRY_RUN" == false ]] || die "dry-run must be true or false, not $DRY_RUN"
@@ -580,7 +584,7 @@ main() {
 
   HANDLE=""
   resolve_did "$IDENTIFIER"
-  if [[ -n "${PUBLISHER_DID:-}" && "$did" != "$PUBLISHER_DID" ]]; then
+  if [[ "$did" != "$PUBLISHER_DID" ]]; then
     die "$IDENTIFIER resolves to $did, not the expected publisher $PUBLISHER_DID; nothing was read or written"
   fi
   did_document "$did"
