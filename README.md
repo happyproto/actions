@@ -7,8 +7,9 @@ GitHub Actions for [HappyProto](https://happyproto.at).
 | [`setup-hpy`](#setup-hpy) | Installs `hpy`, the HappyProto command line. |
 | [`plugin-publish`](#plugin-publish) | Publishes a HappyView plugin release to the HappyProto registry. |
 | [`lexicon-publish`](#lexicon-publish) | Publishes a directory of atproto lexicons so a PDS can resolve them. |
+| [`release-publish`](#release-publish) | Publishes a software release as `software.release.*` records in the publisher's own repo. |
 
-Both run on Linux and macOS runners. Pin the major version, e.g. `@v1`.
+All of them run on Linux and macOS runners. Pin the major version, e.g. `@v1`.
 
 `hpy` has only prereleases so far, so the examples below set the channel to
 `beta`. Drop that once `hpy` 1.0.0 is out.
@@ -150,11 +151,120 @@ given to `goat`.
     password: ${{ secrets.HAPPYVIEW_DEV_LEXICON_APP_PASSWORD }}
 ```
 
+## `release-publish`
+
+Publishes one release as `software.release.*` records in the publishing
+account's own repo, talking XRPC to its PDS with `curl`. It signs in with an
+app password, never touches anyone else's repo, and never writes a blob.
+
+```yaml
+- uses: happyproto/actions/release-publish@v1
+  with:
+    identifier: happyview.dev
+    publisher-did: did:plc:qneu5uamqs6cug7sjobbaexm
+    password: ${{ secrets.RELEASE_APP_PASSWORD }}
+    project: happyview
+    version: ${{ steps.release.outputs.new-release-version }}
+    repository: https://github.com/${{ github.repository }}.git
+    commit: ${{ github.sha }}
+    changelog-url: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.release.outputs.new-release-version }}
+    published-at: ${{ steps.published.outputs.at }}
+    channels: |
+      v2
+      latest
+    dry-run: false
+```
+
+For project `P`, version `V` and `published-at` `T` it writes, in this order:
+
+| Record | Key | On a rerun |
+| --- | --- | --- |
+| `software.release.project` | `P` | Created if missing, otherwise left alone. |
+| `software.release.manifest` | the TID of `T` | Immutable. Identical: skipped. Different: the action fails. |
+| `software.release.version` | `P.V` | Immutable, as the manifest. It names the manifest by URI and CID. |
+| `software.release.channel` | `P.<channel>` | Created, or moved to `V` with `swapRecord`, so a concurrent move fails instead of being overwritten. |
+
+The manifest's key is a [TID](https://atproto.com/specs/tid) made from
+`published-at` (microseconds since 1970, clock id 0), so the same release
+always gets the same key. Take `published-at` from the release itself, such as
+the GitHub release's `published_at`, never from the clock of the run.
+
+A channel never moves backwards: when it already points at a version that is
+newer by SemVer (`3.0.0` is newer than `3.0.0-beta.12`, `alpha.10` newer than
+`alpha.9`), it is left there with a notice. If the version record a channel points at
+can't be read, or its version isn't SemVer, the action can't tell which is
+newer, so it fails naming the channel and that URI rather than risk moving it
+back. Fix the channel by hand (restore that version, point the channel at the
+right one, or delete the channel record so a rerun creates it), then rerun.
+
+Every record is read and planned before anything is written. If an immutable
+record differs from the plan, or a planned record holds a blob, the action
+fails and writes nothing. Any XRPC error stops the run, naming the error; there
+are no retries, so a rerun picks up where it stopped.
+
+| Input | Default | |
+| --- | --- | --- |
+| `identifier` | | Required. Handle or DID of the publishing account. |
+| `password` | | An app password for that account. Not needed for a dry run. |
+| `publisher-did` | yes | The DID `identifier` must resolve to and the session must sign in as; anything else fails before a record is read. Required, so a credential for the wrong account can never write release records. |
+| `project` | | Required. The project name and the project record's key. |
+| `version` | | Required unless `releases` is set. SemVer, with or without a leading `v`; no build metadata. |
+| `repository` | | Required unless `releases` is set. The cloneable git URL the release was built from. |
+| `commit` | | Required unless `releases` is set. The full 40-character SHA-1. |
+| `tag` | `v<version>` | The git tag, recorded as `refs/tags/<tag>`. |
+| `changelog-url` | | Left out of the version record when empty. |
+| `published-at` | | Required unless `releases` is set. RFC 3339; gives the manifest's key. |
+| `channels` | | Channel names, comma or newline separated (`v2,latest` works), spaces around them ignored. Empty writes no channel. |
+| `releases` | | A path to a JSON file of releases to publish in one run; see [Many releases at once](#many-releases-at-once). |
+| `pace` | `2` | Seconds to wait between writes. Not used in a dry run. |
+| `dry-run` | `true` | Print every planned record and action (`create`, `skip`, `fail`, `move`, `skip-backwards`) from public reads, without signing in or writing. A planned `fail` fails the dry run too. |
+| `plc-url` | `https://plc.directory` | Where `did:plc` documents are looked up. `did:web` uses `/.well-known/did.json`. |
+
+Outputs:
+
+- `version-uri`, `version-cid`: the version record, the last one for a batch.
+  `version-cid` is empty on a dry run before the version exists.
+- `published`: `true` when this run wrote any record.
+- `count-written`: how many releases needed at least one record written.
+  Always 0 on a dry run.
+- `count-skipped`: how many releases were already published in full.
+
+### Many releases at once
+
+To backfill past releases in one job, write them to a JSON file and pass its
+path as `releases`, leaving `version`, `repository`, `commit`, `tag`,
+`changelog-url`, `published-at` and `channels` empty; setting any of them
+alongside `releases` fails. Each entry takes those seven keys with the same
+meanings, and `channels` may be a string or an array:
+
+```json
+[
+  { "version": "2.17.3", "repository": "https://github.com/example/app.git",
+    "commit": "…", "published-at": "2026-10-15T00:00:00Z" },
+  { "version": "2.17.4", "repository": "https://github.com/example/app.git",
+    "commit": "…", "published-at": "2026-11-12T00:00:00Z", "channels": ["v2", "latest"] }
+]
+```
+
+Every entry is checked before the first request, including that no two share
+a `published-at`, since that would give them one manifest key. The releases
+are then published in the file's order with one session, `pace` seconds apart
+between writes, under the same rules as a single release. Put the channels only
+on the newest release of each line; older entries without channels only add
+their manifest and version.
+
+The run stops at the first release that fails, before writing anything for
+it. The releases before it stay published, and a rerun skips them. A dry run
+prints every release's plan and fails at the end if any would fail.
+
+The action needs `bash`, `curl`, `jq`, `dig` and `python3`, which GitHub's
+Ubuntu and macOS runners have.
+
 ## Development
 
 ```sh
 for t in test/*.test.sh; do bash "$t"; done   # unit tests
-shellcheck -x setup-hpy/*.sh plugin-publish/*.sh lexicon-publish/*.sh test/*.sh
+shellcheck -x setup-hpy/*.sh plugin-publish/*.sh lexicon-publish/*.sh release-publish/*.sh test/*.sh
 ```
 
 CI runs the unit tests, then the actions themselves on Ubuntu and macOS.

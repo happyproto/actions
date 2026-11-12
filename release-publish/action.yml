@@ -1,0 +1,105 @@
+name: Publish a software release
+description: Publish a release as software.release project, manifest, version and channel records in the publisher's atproto repo.
+author: HappyProto
+branding:
+  icon: tag
+  color: purple
+
+inputs:
+  identifier:
+    description: Handle or DID of the publishing account.
+    required: true
+  password:
+    description: An app password for that account. Not needed for a dry run.
+    required: false
+    default: ""
+  publisher-did:
+    description: The DID the identifier must resolve to, and the session must sign in as. The action fails before reading or writing anything when it resolves elsewhere. Required, so a credential for the wrong account can never write release records.
+    required: true
+  project:
+    description: The project name, also the project record's key.
+    required: true
+  version:
+    description: The SemVer version, with or without a leading v. No build metadata. Required unless releases is set.
+    required: false
+    default: ""
+  repository:
+    description: The cloneable git repository URL the release was built from. Required unless releases is set.
+    required: false
+    default: ""
+  commit:
+    description: The full 40-character SHA-1 commit the release was built from. Required unless releases is set.
+    required: false
+    default: ""
+  tag:
+    description: The git tag, e.g. v2.17.4, or a full ref. Defaults to v<version>.
+    required: false
+    default: ""
+  changelog-url:
+    description: Where the release notes are. Omitted from the record when empty.
+    required: false
+    default: ""
+  published-at:
+    description: When the release was published (RFC 3339). Gives the manifest's record key, so it must be the same on every run for one release. Required unless releases is set.
+    required: false
+    default: ""
+  channels:
+    description: Channel names to point at this version, comma or newline separated. May be empty.
+    required: false
+    default: ""
+  releases:
+    description: A path to a JSON file holding an array of releases to publish in order, each {version, repository, commit, tag, changelog-url, published-at, channels} with the meanings of those inputs. When set, those seven inputs must be empty.
+    required: false
+    default: ""
+  pace:
+    description: Seconds to wait between writes, so a long batch stays under the PDS's rate limits. Not used in a dry run.
+    required: false
+    default: "2"
+  dry-run:
+    description: Print the planned records and actions from public reads, without signing in or writing.
+    required: false
+    default: "true"
+  plc-url:
+    description: The PLC directory for did:plc lookups.
+    required: false
+    default: https://plc.directory
+
+outputs:
+  version-uri:
+    description: The version record's AT URI (the last release's, for a batch).
+    value: ${{ steps.publish.outputs.version-uri }}
+  version-cid:
+    description: The version record's CID (the last release's, for a batch). Empty on a dry run when the version is not published yet.
+    value: ${{ steps.publish.outputs.version-cid }}
+  published:
+    description: '"true" when this run wrote any record; "false" for a dry run or when everything was already published.'
+    value: ${{ steps.publish.outputs.published }}
+  count-written:
+    description: How many releases needed at least one record written. Always 0 on a dry run.
+    value: ${{ steps.publish.outputs.count-written }}
+  count-skipped:
+    description: How many releases were already published in full, so nothing was written (on a dry run, would be written) for them.
+    value: ${{ steps.publish.outputs.count-skipped }}
+
+runs:
+  using: composite
+  steps:
+    - id: publish
+      shell: bash
+      env:
+        IDENTIFIER: ${{ inputs.identifier }}
+        PASSWORD: ${{ inputs.password }}
+        PUBLISHER_DID: ${{ inputs.publisher-did }}
+        PROJECT: ${{ inputs.project }}
+        VERSION: ${{ inputs.version }}
+        REPOSITORY: ${{ inputs.repository }}
+        COMMIT: ${{ inputs.commit }}
+        TAG: ${{ inputs.tag }}
+        CHANGELOG_URL: ${{ inputs.changelog-url }}
+        PUBLISHED_AT: ${{ inputs.published-at }}
+        CHANNELS: ${{ inputs.channels }}
+        RELEASES: ${{ inputs.releases }}
+        PACE: ${{ inputs.pace }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        PLC_URL: ${{ inputs.plc-url }}
+      run: '"$GITHUB_ACTION_PATH/publish.sh"'

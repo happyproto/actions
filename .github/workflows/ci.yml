@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Shellcheck
-        run: shellcheck -x setup-hpy/*.sh plugin-publish/*.sh lexicon-publish/*.sh test/*.sh
+        run: shellcheck -x setup-hpy/*.sh plugin-publish/*.sh lexicon-publish/*.sh release-publish/*.sh test/*.sh
       - name: Unit tests
         run: for t in test/*.test.sh; do echo "== $t"; bash "$t" || exit 1; done
 
@@ -120,8 +120,78 @@ jobs:
           test "${{ steps.dry-run.outcome }}" = failure
           goat --version | grep -q "0.2.6"
 
+  release-publish:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [depot-ubuntu-24.04, depot-macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # A dry run only reads public records and never signs in. bsky.app has
+      # no software.release records, so every one is planned as a create.
+      - name: A dry run plans every record from public reads
+        id: dry-run
+        uses: ./release-publish
+        with:
+          identifier: bsky.app
+          publisher-did: did:plc:z72i7hdynmk6r22z27h6tvur
+          project: release-publish-ci
+          version: 0.0.1-alpha.1
+          repository: https://github.com/happyproto/actions.git
+          commit: 0123456789abcdef0123456789abcdef01234567
+          published-at: 2026-01-01T00:00:00Z
+          channels: v0-alpha
+      - env:
+          URI: ${{ steps.dry-run.outputs.version-uri }}
+          PUBLISHED: ${{ steps.dry-run.outputs.published }}
+        run: |
+          test "$PUBLISHED" = false
+          case "$URI" in at://did:plc:*/software.release.version/release-publish-ci.0.0.1-alpha.1) ;; *) echo "::error::version-uri is $URI"; exit 1 ;; esac
+      - name: A batch dry run plans every release
+        run: |
+          cat > "$RUNNER_TEMP/releases.json" <<'JSON'
+          [
+            {"version": "0.0.1", "repository": "https://github.com/happyproto/actions.git",
+             "commit": "0123456789abcdef0123456789abcdef01234567", "published-at": "2026-01-01T00:00:00Z"},
+            {"version": "0.0.2", "repository": "https://github.com/happyproto/actions.git",
+             "commit": "0123456789abcdef0123456789abcdef01234567", "published-at": "2026-01-02T00:00:00Z",
+             "channels": ["v0"]}
+          ]
+          JSON
+          echo "RELEASES_FILE=$RUNNER_TEMP/releases.json" >> "$GITHUB_ENV"
+      - id: batch
+        uses: ./release-publish
+        with:
+          identifier: bsky.app
+          publisher-did: did:plc:z72i7hdynmk6r22z27h6tvur
+          project: release-publish-ci
+          releases: ${{ env.RELEASES_FILE }}
+      - env:
+          URI: ${{ steps.batch.outputs.version-uri }}
+          WRITTEN: ${{ steps.batch.outputs.count-written }}
+          PUBLISHED: ${{ steps.batch.outputs.published }}
+        run: |
+          test "$PUBLISHED" = false
+          test "$WRITTEN" = 0
+          case "$URI" in */software.release.version/release-publish-ci.0.0.2) ;; *) echo "::error::version-uri is $URI"; exit 1 ;; esac
+      - name: A publisher mismatch stops the action
+        id: mismatch
+        continue-on-error: true
+        uses: ./release-publish
+        with:
+          identifier: bsky.app
+          publisher-did: did:plc:notthepublisher
+          project: release-publish-ci
+          version: 0.0.1
+          repository: https://github.com/happyproto/actions.git
+          commit: 0123456789abcdef0123456789abcdef01234567
+          published-at: 2026-01-01T00:00:00Z
+      - run: test "${{ steps.mismatch.outcome }}" = failure
+
   release:
-    needs: [test, setup-hpy, plugin-publish, lexicon-publish]
+    needs: [test, setup-hpy, plugin-publish, lexicon-publish, release-publish]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: depot-ubuntu-24.04
     permissions:
