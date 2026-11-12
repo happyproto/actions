@@ -148,6 +148,32 @@ jobs:
         run: |
           test "$PUBLISHED" = false
           case "$URI" in at://did:plc:*/software.release.version/release-publish-ci.0.0.1-alpha.1) ;; *) echo "::error::version-uri is $URI"; exit 1 ;; esac
+      - name: A batch dry run plans every release
+        run: |
+          cat > "$RUNNER_TEMP/releases.json" <<'JSON'
+          [
+            {"version": "0.0.1", "repository": "https://github.com/happyproto/actions.git",
+             "commit": "0123456789abcdef0123456789abcdef01234567", "published-at": "2026-01-01T00:00:00Z"},
+            {"version": "0.0.2", "repository": "https://github.com/happyproto/actions.git",
+             "commit": "0123456789abcdef0123456789abcdef01234567", "published-at": "2026-01-02T00:00:00Z",
+             "channels": ["v0"]}
+          ]
+          JSON
+          echo "RELEASES_FILE=$RUNNER_TEMP/releases.json" >> "$GITHUB_ENV"
+      - id: batch
+        uses: ./release-publish
+        with:
+          identifier: bsky.app
+          project: release-publish-ci
+          releases: ${{ env.RELEASES_FILE }}
+      - env:
+          URI: ${{ steps.batch.outputs.version-uri }}
+          WRITTEN: ${{ steps.batch.outputs.count-written }}
+          PUBLISHED: ${{ steps.batch.outputs.published }}
+        run: |
+          test "$PUBLISHED" = false
+          test "$WRITTEN" = 0
+          case "$URI" in */software.release.version/release-publish-ci.0.0.2) ;; *) echo "::error::version-uri is $URI"; exit 1 ;; esac
       - name: A publisher mismatch stops the action
         id: mismatch
         continue-on-error: true

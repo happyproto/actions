@@ -24,9 +24,18 @@
 #   CHANGELOG_URL  optional
 #   PUBLISHED_AT   RFC 3339 (required); gives the manifest's key
 #   CHANNELS       channel names, comma or newline separated; may be empty
+#   RELEASES       a path to a JSON file holding an array of releases, each
+#                  {version, repository, commit, tag, changelog-url,
+#                  published-at, channels}; replaces the seven inputs above,
+#                  which must then be empty
 #   DRY_RUN        true (default) or false
+#   PACE           seconds between writes (default 2); not used in a dry run
 #   PLC_URL        default https://plc.directory
-# Writes version-uri, version-cid and published to $GITHUB_OUTPUT, and the
+# A batch runs in the given order with one session and stops at the first
+# release that fails; the releases before it stay published.
+# Writes version-uri and version-cid (of the last release), published (true
+# when anything was written), count-written and count-skipped (releases that
+# needed writes, and releases that needed none) to $GITHUB_OUTPUT, and the
 # plan to $GITHUB_STEP_SUMMARY, when they are set.
 #
 # Sourcing this file defines its functions without running anything; the
@@ -230,9 +239,14 @@ same_json() { [[ "$(jq -S . <<<"$1")" == "$(jq -S . <<<"$2")" ]]; }
 
 # write_record create|put COLLECTION RKEY JSON [SWAP-CID]: sets $written_uri
 # and $written_cid.
+writes_done=0
 write_record() {
   local kind=$1 collection=$2 rkey=$3 json=$4 swap=${5-} method payload
   refuse_blobs "at://$did/$collection/$rkey" "$json"
+  # PACE seconds between writes, so a long batch stays under the PDS's limits.
+  if ((writes_done > 0)) && [[ "$PACE" != 0 ]]; then sleep "$PACE"; fi
+  writes_done=$((writes_done + 1))
+  entry_wrote=true
   payload=$(jq -n --arg repo "$did" --arg collection "$collection" --arg rkey "$rkey" \
     --argjson record "$json" --arg swap "$swap" \
     '{repo: $repo, collection: $collection, rkey: $rkey, record: $record}
@@ -254,6 +268,17 @@ write_record() {
 
 plan_lines=()
 failures=0
+project_planned=false
+project_action=""
+
+# planned_nothing: true when the last plan writes nothing.
+planned_nothing() {
+  [[ "$project_action$manifest_action$version_action" == skipskipskip ]] || return 1
+  local action
+  for action in ${channel_actions[@]+"${channel_actions[@]}"}; do
+    [[ "$action" == skip || "$action" == skip-backwards ]] || return 1
+  done
+}
 
 note() { # action what [detail]
   local line
@@ -280,15 +305,22 @@ plan() {
 
   echo "Plan for $PROJECT $VERSION in $did ($pds):"
 
-  # Project: created if missing, otherwise left as it is.
-  get_record "$PROJECT_NSID" "$PROJECT"
-  if [[ "$found" == true ]]; then
+  # Project: created if missing, otherwise left as it is. Once an earlier
+  # release in this run has planned it, it is not read again.
+  if [[ "$project_planned" == true ]]; then
     project_action=skip
-    note skip "$(project_uri)" "exists"
+    note skip "$(project_uri)" "planned by an earlier release"
   else
-    project_action=create
-    note create "$(project_uri)"
-    show "$(project_record)"
+    get_record "$PROJECT_NSID" "$PROJECT"
+    if [[ "$found" == true ]]; then
+      project_action=skip
+      note skip "$(project_uri)" "exists"
+    else
+      project_action=create
+      note create "$(project_uri)"
+      show "$(project_record)"
+    fi
+    project_planned=true
   fi
 
   # Manifest: immutable.
@@ -401,14 +433,12 @@ execute() {
     write_record create "$MANIFEST_NSID" "$manifest_rkey" "$(manifest_record)"
     manifest_cid=$written_cid
   fi
-  published=false
   if [[ "$version_action" == create ]]; then
     write_record create "$VERSION_NSID" "$version_rkey" "$(version_record "$manifest_uri" "$manifest_cid")"
     version_cid=$written_cid
-    published=true
   fi
   local i channel
-  for i in "${!channel_names[@]}"; do
+  for i in ${channel_names[@]+"${!channel_names[@]}"}; do
     channel=${channel_names[$i]}
     case "${channel_actions[$i]}" in
       create)
@@ -427,43 +457,116 @@ execute() {
 
 rkey_ok() { [[ "$1" =~ ^[A-Za-z0-9._:~-]+$ && ${#1} -le 512 && "$1" != . && "$1" != .. ]]; }
 
-main() {
-  : "${IDENTIFIER:?the identifier input is required}"
-  : "${PROJECT:?the project input is required}"
-  : "${VERSION:?the version input is required}"
-  : "${REPOSITORY:?the repository input is required}"
-  : "${COMMIT:?the commit input is required}"
-  : "${PUBLISHED_AT:?the published-at input is required}"
-  PLC_URL="${PLC_URL:-https://plc.directory}"
-  CHANGELOG_URL="${CHANGELOG_URL:-}"
-  local dry_run="${DRY_RUN:-true}"
-  [[ "$dry_run" == true || "$dry_run" == false ]] || die "dry-run must be true or false, not $dry_run"
+SINGLE_INPUTS=(VERSION REPOSITORY COMMIT TAG CHANGELOG_URL PUBLISHED_AT CHANNELS)
+ENTRY_KEYS='["version", "repository", "commit", "tag", "changelog-url", "published-at", "channels"]'
 
-  if [[ -n "${PASSWORD:-}" ]]; then
-    echo "::add-mask::$PASSWORD"
-  elif [[ "$dry_run" != true ]]; then
-    die "publishing needs the password input: an app password for $IDENTIFIER"
+# check_releases_file: dies unless RELEASES names a file holding a non-empty
+# array of entries with only the known keys.
+check_releases_file() {
+  [[ -f "$RELEASES" ]] || die "releases: $RELEASES is not a file"
+  jq -e --argjson keys "$ENTRY_KEYS" '
+    type == "array" and length > 0 and all(.[];
+      type == "object" and (keys - $keys == [])
+      and all(to_entries[]; (.value | type) == "string"
+        or (.key == "channels" and (.value | type) == "array" and all(.value[]; type == "string"))))' \
+    "$RELEASES" >/dev/null 2>&1 ||
+    die "releases: $RELEASES must hold a non-empty JSON array of objects with only the keys $(jq -r 'join(", ")' <<<"$ENTRY_KEYS"), each a string (channels may be an array of strings)"
+}
+
+# releases_json: every release to publish, as a JSON array of entries with
+# every key a string. From the checked RELEASES file, or one entry made of the
+# single-release inputs.
+releases_json() {
+  if [[ -z "${RELEASES:-}" ]]; then
+    jq -n '[{version: env.VERSION, repository: env.REPOSITORY, commit: env.COMMIT, tag: env.TAG,
+      "changelog-url": env.CHANGELOG_URL, "published-at": env.PUBLISHED_AT, channels: env.CHANNELS}
+      | map_values(. // "")]'
+  else
+    jq -c '[.[] | {version, repository, commit, tag, "changelog-url", "published-at",
+      channels: (.channels | if type == "array" then join("\n") else . end)} | map_values(. // "")]' "$RELEASES"
   fi
+}
+
+# load_release INDEX: sets the per-release globals from entry INDEX of
+# $releases, checking each. Reads and writes nothing.
+load_release() {
+  local entry where field
+  entry=$(jq -c ".[$1]" <<<"$releases")
+  if [[ -n "${RELEASES:-}" ]]; then where="releases[$1]: "; else where=""; fi
+  for field in version repository commit published-at; do
+    [[ -n "$(jq -r --arg f "$field" '.[$f]' <<<"$entry")" ]] ||
+      die "${where}the $field ${where:+field}${where:-input} is required"
+  done
+  VERSION=$(jq -r .version <<<"$entry")
+  REPOSITORY=$(jq -r .repository <<<"$entry")
+  COMMIT=$(jq -r .commit <<<"$entry")
+  CHANGELOG_URL=$(jq -r '.["changelog-url"]' <<<"$entry")
+  PUBLISHED_AT=$(jq -r '.["published-at"]' <<<"$entry")
+  local tag
+  tag=$(jq -r .tag <<<"$entry")
 
   VERSION="${VERSION#v}"
-  helper semver-check "$VERSION" 2>/dev/null || die "version $VERSION is not a SemVer version"
-  [[ "$VERSION" != *+* ]] || die "version $VERSION has build metadata, which a record key cannot hold"
-  rkey_ok "$PROJECT" || die "project $PROJECT can't be part of a record key (letters, digits and . _ : ~ - only)"
+  helper semver-check "$VERSION" 2>/dev/null || die "${where}version $VERSION is not a SemVer version"
+  [[ "$VERSION" != *+* ]] || die "${where}version $VERSION has build metadata, which a record key cannot hold"
   COMMIT=$(tr '[:upper:]' '[:lower:]' <<<"$COMMIT")
-  [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || die "commit must be a full 40-character SHA-1, not $COMMIT"
-  local tag="${TAG:-v$VERSION}"
+  [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || die "${where}commit must be a full 40-character SHA-1, not $COMMIT"
+  tag="${tag:-v$VERSION}"
   if [[ "$tag" == refs/* ]]; then GIT_REF=$tag; else GIT_REF="refs/tags/$tag"; fi
-  manifest_rkey=$(helper tid "$PUBLISHED_AT" 2>&1) || die "published-at: $manifest_rkey"
+  manifest_rkey=$(helper tid "$PUBLISHED_AT" 2>&1) || die "${where}published-at: $manifest_rkey"
   version_rkey="$PROJECT.$VERSION"
-  channels=$(list "${CHANNELS:-}")
+  channels=$(list "$(jq -r .channels <<<"$entry")")
   local channel
   while read -r channel; do
     [[ -n "$channel" ]] || continue
-    rkey_ok "$PROJECT.$channel" || die "channel $channel can't be part of a record key (letters, digits and . _ : ~ - only)"
+    rkey_ok "$PROJECT.$channel" || die "${where}channel $channel can't be part of a record key (letters, digits and . _ : ~ - only)"
   done <<<"$channels"
   if [[ -n "$channels" && $(sort <<<"$channels" | uniq -d) ]]; then
-    die "channels lists $(sort <<<"$channels" | uniq -d | head -n1) twice"
+    die "${where}channels lists $(sort <<<"$channels" | uniq -d | head -n1) twice"
   fi
+  if [[ -n "${did:-}" ]]; then
+    manifest_uri="at://$did/$MANIFEST_NSID/$manifest_rkey"
+    version_uri="at://$did/$VERSION_NSID/$version_rkey"
+  fi
+}
+
+main() {
+  : "${IDENTIFIER:?the identifier input is required}"
+  : "${PROJECT:?the project input is required}"
+  PLC_URL="${PLC_URL:-https://plc.directory}"
+  DRY_RUN="${DRY_RUN:-true}"
+  [[ "$DRY_RUN" == true || "$DRY_RUN" == false ]] || die "dry-run must be true or false, not $DRY_RUN"
+  PACE="${PACE:-2}"
+  [[ "$PACE" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "pace must be a number of seconds, not $PACE"
+
+  if [[ -n "${PASSWORD:-}" ]]; then
+    echo "::add-mask::$PASSWORD"
+  elif [[ "$DRY_RUN" != true ]]; then
+    die "publishing needs the password input: an app password for $IDENTIFIER"
+  fi
+  rkey_ok "$PROJECT" || die "project $PROJECT can't be part of a record key (letters, digits and . _ : ~ - only)"
+
+  if [[ -n "${RELEASES:-}" ]]; then
+    local name mixed=""
+    for name in "${SINGLE_INPUTS[@]}"; do
+      if [[ -n "${!name:-}" ]]; then mixed+=" $(tr '[:upper:]_' '[:lower:]-' <<<"$name")"; fi
+    done
+    [[ -z "$mixed" ]] || die "releases replaces the single-release inputs; leave these empty:$mixed"
+    check_releases_file
+  fi
+
+  # Every entry is checked before anything is read, so a bad one late in a
+  # batch stops the run before the first write.
+  did=""
+  releases=$(releases_json)
+  local count i keys=""
+  count=$(jq length <<<"$releases")
+  for ((i = 0; i < count; i++)); do
+    load_release "$i"
+    keys+="$manifest_rkey $VERSION"$'\n'
+  done
+  local clash
+  clash=$(cut -d' ' -f1 <<<"$keys" | grep -v '^$' | sort | uniq -d | head -n1)
+  [[ -z "$clash" ]] || die "releases: two entries share a published-at, so they would share the manifest key $clash"
 
   tmp=$(mktemp -d)
   trap cleanup EXIT
@@ -481,39 +584,49 @@ main() {
   [[ "$pds" == https://* ]] || die "$did's DID document names no #atproto_pds endpoint"
   pds="${pds%/}"
 
-  manifest_uri="at://$did/$MANIFEST_NSID/$manifest_rkey"
-  version_uri="at://$did/$VERSION_NSID/$version_rkey"
-
-  if [[ "$dry_run" != true ]]; then
+  if [[ "$DRY_RUN" != true ]]; then
     sign_in
   fi
 
-  plan
-
-  local heading="### release-publish: $PROJECT $VERSION"
-  if [[ "$dry_run" == true ]]; then heading+=" (dry run)"; fi
+  local heading="### release-publish: $PROJECT"
+  if ((count == 1)); then heading+=" $(jq -r '.[0].version | ltrimstr("v")' <<<"$releases")"; else heading+=", $count releases"; fi
+  if [[ "$DRY_RUN" == true ]]; then heading+=" (dry run)"; fi
   summary "$heading"
   summary '```'
-  local line
-  for line in "${plan_lines[@]}"; do summary "$line"; done
+
+  local written=0 skipped=0 line before
+  for ((i = 0; i < count; i++)); do
+    load_release "$i"
+    if ((count > 1)); then echo "== release $((i + 1)) of $count"; fi
+    before=$failures
+    plan
+    if ((failures > before)) && [[ "$DRY_RUN" != true ]]; then
+      for line in ${plan_lines[@]+"${plan_lines[@]}"}; do summary "$line"; done
+      summary '```'
+      local done_note=""
+      if ((i > 0)); then done_note=" (the $i release(s) before it are published: $written written, $skipped already there)"; fi
+      die "$VERSION: $((failures - before)) record(s) already published with different contents; stopped before writing anything for it$done_note"
+    fi
+    if [[ "$DRY_RUN" == true ]]; then
+      if ((failures == before)) && planned_nothing; then skipped=$((skipped + 1)); fi
+      continue
+    fi
+    entry_wrote=false
+    execute
+    if [[ "$entry_wrote" == true ]]; then written=$((written + 1)); else skipped=$((skipped + 1)); fi
+  done
+  for line in ${plan_lines[@]+"${plan_lines[@]}"}; do summary "$line"; done
   summary '```'
 
   if ((failures > 0)); then
-    die "$failures record(s) already published with different contents; nothing was written"
+    die "$failures record(s) already published with different contents"
   fi
-
-  if [[ "$dry_run" == true ]]; then
-    echo "Dry run: nothing was written."
-    output version-uri "$version_uri"
-    output version-cid "$version_cid"
-    output published false
-    return
-  fi
-
-  execute
+  if [[ "$DRY_RUN" == true ]]; then echo "Dry run: nothing was written."; fi
   output version-uri "$version_uri"
   output version-cid "$version_cid"
-  output published "$published"
+  if ((written > 0)); then output published true; else output published false; fi
+  output count-written "$written"
+  output count-skipped "$skipped"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

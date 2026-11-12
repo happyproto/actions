@@ -120,6 +120,11 @@ if xrpc in ("com.atproto.repo.createRecord", "com.atproto.repo.putRecord"):
 
 err(400, "MethodNotImplemented", xrpc or url)
 STUB
+  cat > "$WORK/bin/sleep" <<STUB
+#!/usr/bin/env bash
+echo "sleep \$*" >> "$WORK/sleep.log"
+STUB
+  chmod +x "$WORK/bin/sleep"
   cat > "$WORK/bin/dig" <<STUB
 #!/usr/bin/env bash
 echo "dig \$*" >> "$WORK/dig.log"
@@ -168,7 +173,7 @@ run_publish() {
     IDENTIFIER="$HANDLE" PASSWORD=app-password-secret PUBLISHER_DID="$DID" \
     PROJECT=happyview VERSION=2.17.4 REPOSITORY=https://github.com/example/happyview.git \
     COMMIT="$COMMIT_SHA" TAG=v2.17.4 CHANGELOG_URL=https://github.com/example/happyview/releases/tag/v2.17.4 \
-    PUBLISHED_AT="$PUBLISHED_AT" CHANNELS=v2 DRY_RUN=false "$@" "$publish"
+    PUBLISHED_AT="$PUBLISHED_AT" CHANNELS=v2 DRY_RUN=false PACE=0 "$@" "$publish"
 }
 
 # Write calls, in order, as "<xrpc> <collection>/<rkey>".
@@ -526,6 +531,148 @@ test_a_leading_v_is_dropped_and_the_tag_defaults_to_it() {
   out=$(run_publish VERSION=v2.17.4 TAG= CHANNELS= 2>&1) || fail "publish failed: $out"
   assert_eq "$VERSION_URI" "$(output_of version-uri)"
   assert_eq refs/tags/v2.17.4 "$(stored software.release.manifest "$TID" | jq -r '.value.artifacts[0].ref')"
+}
+
+# ---------------------------------------------------------------- batch ----
+
+# A backfill: three releases, the newest carrying the channels.
+write_releases() {
+  jq -n --arg commit "$COMMIT_SHA" '[
+    {version: "2.17.2", repository: "https://github.com/example/happyview.git", commit: $commit,
+     "published-at": "2026-10-01T00:00:00Z"},
+    {version: "v2.17.3", repository: "https://github.com/example/happyview.git", commit: $commit,
+     tag: "v2.17.3", "published-at": "2026-10-15T00:00:00Z", channels: ""},
+    {version: "2.17.4", repository: "https://github.com/example/happyview.git", commit: $commit,
+     "changelog-url": "https://github.com/example/happyview/releases/tag/v2.17.4",
+     "published-at": "2026-11-12T00:00:00Z", channels: ["v2", "latest"]}
+  ]' > "$WORK/releases.json"
+}
+
+# Runs a batch: RELEASES set and the single-release inputs empty.
+run_batch() {
+  run_publish VERSION= REPOSITORY= COMMIT= TAG= CHANGELOG_URL= PUBLISHED_AT= CHANNELS= \
+    RELEASES="$WORK/releases.json" "$@"
+}
+
+tid_of() { python3 "$helper" tid "$1"; }
+
+test_a_batch_publishes_in_order_with_one_session() {
+  stub_tools
+  write_releases
+  local out
+  out=$(run_batch 2>&1) || fail "batch failed: $out"
+  assert_eq "com.atproto.repo.createRecord software.release.project/happyview
+com.atproto.repo.createRecord software.release.manifest/$(tid_of 2026-10-01T00:00:00Z)
+com.atproto.repo.createRecord software.release.version/happyview.2.17.2
+com.atproto.repo.createRecord software.release.manifest/$(tid_of 2026-10-15T00:00:00Z)
+com.atproto.repo.createRecord software.release.version/happyview.2.17.3
+com.atproto.repo.createRecord software.release.manifest/$TID
+com.atproto.repo.createRecord software.release.version/happyview.2.17.4
+com.atproto.repo.createRecord software.release.channel/happyview.v2
+com.atproto.repo.createRecord software.release.channel/happyview.latest" "$(writes)" "writes"
+  assert_eq 1 "$(jq -r 'select(.xrpc == "com.atproto.server.createSession") | .url' "$WORK/requests.jsonl" | grep -c .)" "sessions"
+  assert_eq "$(stored software.release.version happyview.2.17.4 | jq -r .cid)" \
+    "$(stored software.release.channel happyview.latest | jq -r .value.version.cid)" "latest's target"
+  assert_eq refs/tags/v2.17.2 "$(stored software.release.manifest "$(tid_of 2026-10-01T00:00:00Z)" | jq -r '.value.artifacts[0].ref')" "default tag"
+  assert_eq "$VERSION_URI" "$(output_of version-uri)"
+  assert_eq "$(stored software.release.version happyview.2.17.4 | jq -r .cid)" "$(output_of version-cid)"
+  assert_eq true "$(output_of published)"
+  assert_eq 3 "$(output_of count-written)"
+  assert_eq 0 "$(output_of count-skipped)"
+}
+
+test_a_rerun_batch_is_all_skips() {
+  stub_tools
+  write_releases
+  run_batch >/dev/null 2>&1 || fail "first batch failed"
+  : > "$WORK/requests.jsonl"
+  rm "$WORK/output"
+  local out
+  out=$(run_batch 2>&1) || fail "rerun failed: $out"
+  assert_eq "" "$(writes)" "writes"
+  assert_eq false "$(output_of published)"
+  assert_eq 0 "$(output_of count-written)"
+  assert_eq 3 "$(output_of count-skipped)"
+}
+
+test_a_failure_mid_batch_stops_and_keeps_what_came_before() {
+  stub_tools
+  write_releases
+  seed software.release.manifest "$(tid_of 2026-10-15T00:00:00Z)" bafyother \
+    '{"$type": "software.release.manifest", "project": "x", "artifacts": []}'
+  local out
+  out=$(run_batch 2>&1) && fail "expected failure"
+  assert_contains "$out" "::error::2.17.3:"
+  assert_contains "$out" "the 1 release(s) before it are published"
+  assert_eq "com.atproto.repo.createRecord software.release.project/happyview
+com.atproto.repo.createRecord software.release.manifest/$(tid_of 2026-10-01T00:00:00Z)
+com.atproto.repo.createRecord software.release.version/happyview.2.17.2" "$(writes)" "writes"
+  assert_not_contains "$out" "release 3 of 3" "the release after it"
+}
+
+test_a_batch_dry_run_prints_every_plan_and_writes_nothing() {
+  stub_tools
+  write_releases
+  local out
+  out=$(run_batch DRY_RUN=true PASSWORD= PACE=5 2>&1) || fail "dry run failed: $out"
+  assert_eq "" "$(jq -r 'select(.method != "GET") | .url' "$WORK/requests.jsonl")" "non-GET calls"
+  assert_contains "$out" "== release 1 of 3"
+  assert_contains "$out" "create          at://$DID/software.release.version/happyview.2.17.2"
+  assert_contains "$out" "create          at://$DID/software.release.version/happyview.2.17.3"
+  assert_contains "$out" "create          at://$DID/software.release.channel/happyview.latest"
+  assert_eq 1 "$(grep -c "^create          $PROJECT_URI" <<<"$out")" "project planned"
+  assert_eq false "$(output_of published)"
+  assert_eq 0 "$(output_of count-written)"
+  [[ ! -f "$WORK/sleep.log" ]] || fail "paced a dry run"
+}
+
+test_a_batch_waits_pace_seconds_between_writes() {
+  stub_tools
+  write_releases
+  run_batch PACE=2 >/dev/null 2>&1 || fail "batch failed"
+  assert_eq 8 "$(grep -c '^sleep 2$' "$WORK/sleep.log")" "pauses between 9 writes"
+}
+
+test_single_release_inputs_mixed_with_releases_are_refused() {
+  stub_tools
+  write_releases
+  local out
+  out=$(run_batch VERSION=2.17.4 CHANNELS=v2 2>&1) && fail "expected failure"
+  assert_contains "$out" "::error::releases replaces the single-release inputs; leave these empty: version channels"
+  assert_eq "" "$(cat "$WORK/requests.jsonl")" "requests"
+}
+
+test_a_bad_entry_anywhere_fails_before_any_request() {
+  stub_tools
+  write_releases
+  jq '.[2].commit = "abc"' "$WORK/releases.json" > "$WORK/r" && mv "$WORK/r" "$WORK/releases.json"
+  local out
+  out=$(run_batch 2>&1) && fail "expected failure"
+  assert_contains "$out" "releases[2]: commit must be a full 40-character SHA-1"
+  assert_eq "" "$(cat "$WORK/requests.jsonl")" "requests"
+}
+
+test_a_malformed_releases_file_is_refused() {
+  stub_tools
+  local out
+  echo '{"version": "1.0.0"}' > "$WORK/releases.json"
+  out=$(run_batch 2>&1) && fail "accepted an object"
+  assert_contains "$out" "non-empty JSON array"
+  echo '[{"version": "1.0.0", "publishedAt": "2026-01-01T00:00:00Z"}]' > "$WORK/releases.json"
+  out=$(run_batch 2>&1) && fail "accepted an unknown key"
+  out=$(run_batch RELEASES="$WORK/missing.json" 2>&1) && fail "accepted a missing file"
+  assert_contains "$out" "is not a file"
+  assert_eq "" "$(cat "$WORK/requests.jsonl")" "requests"
+}
+
+test_two_entries_with_one_published_at_are_refused() {
+  stub_tools
+  write_releases
+  jq '.[1]["published-at"] = .[0]["published-at"]' "$WORK/releases.json" > "$WORK/r" && mv "$WORK/r" "$WORK/releases.json"
+  local out
+  out=$(run_batch 2>&1) && fail "expected failure"
+  assert_contains "$out" "share a published-at"
+  assert_eq "" "$(cat "$WORK/requests.jsonl")" "requests"
 }
 
 run_tests

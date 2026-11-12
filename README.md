@@ -204,18 +204,54 @@ are no retries, so a rerun picks up where it stopped.
 | `password` | | An app password for that account. Not needed for a dry run. |
 | `publisher-did` | | The DID `identifier` must resolve to; anything else fails before a record is read. |
 | `project` | | Required. The project name and the project record's key. |
-| `version` | | Required. SemVer, with or without a leading `v`; no build metadata. |
-| `repository` | | Required. The cloneable git URL the release was built from. |
-| `commit` | | Required. The full 40-character SHA-1. |
+| `version` | | Required unless `releases` is set. SemVer, with or without a leading `v`; no build metadata. |
+| `repository` | | Required unless `releases` is set. The cloneable git URL the release was built from. |
+| `commit` | | Required unless `releases` is set. The full 40-character SHA-1. |
 | `tag` | `v<version>` | The git tag, recorded as `refs/tags/<tag>`. |
 | `changelog-url` | | Left out of the version record when empty. |
-| `published-at` | | Required. RFC 3339; gives the manifest's key. |
+| `published-at` | | Required unless `releases` is set. RFC 3339; gives the manifest's key. |
 | `channels` | | Channel names, comma or newline separated. Empty writes no channel. |
+| `releases` | | A path to a JSON file of releases to publish in one run; see [Many releases at once](#many-releases-at-once). |
+| `pace` | `2` | Seconds to wait between writes. Not used in a dry run. |
 | `dry-run` | `true` | Print every planned record and action (`create`, `skip`, `fail`, `move`, `skip-backwards`) from public reads, without signing in or writing. A planned `fail` fails the dry run too. |
 | `plc-url` | `https://plc.directory` | Where `did:plc` documents are looked up. `did:web` uses `/.well-known/did.json`. |
 
-Outputs: `version-uri`, `version-cid` (empty on a dry run before the version
-exists) and `published`: `true` only when this run created the version record.
+Outputs:
+
+- `version-uri`, `version-cid`: the version record, the last one for a batch.
+  `version-cid` is empty on a dry run before the version exists.
+- `published`: `true` when this run wrote any record.
+- `count-written`: how many releases needed at least one record written.
+  Always 0 on a dry run.
+- `count-skipped`: how many releases were already published in full.
+
+### Many releases at once
+
+To backfill past releases in one job, write them to a JSON file and pass its
+path as `releases`, leaving `version`, `repository`, `commit`, `tag`,
+`changelog-url`, `published-at` and `channels` empty; setting any of them
+alongside `releases` fails. Each entry takes those seven keys with the same
+meanings, and `channels` may be a string or an array:
+
+```json
+[
+  { "version": "2.17.3", "repository": "https://github.com/example/app.git",
+    "commit": "…", "published-at": "2026-10-15T00:00:00Z" },
+  { "version": "2.17.4", "repository": "https://github.com/example/app.git",
+    "commit": "…", "published-at": "2026-11-12T00:00:00Z", "channels": ["v2", "latest"] }
+]
+```
+
+Every entry is checked before the first request, including that no two share
+a `published-at`, since that would give them one manifest key. The releases
+are then published in the file's order with one session, `pace` seconds apart
+between writes, under the same rules as a single release. Put the channels only
+on the newest release of each line; older entries without channels only add
+their manifest and version.
+
+The run stops at the first release that fails, before writing anything for
+it. The releases before it stay published, and a rerun skips them. A dry run
+prints every release's plan and fails at the end if any would fail.
 
 The action needs `bash`, `curl`, `jq`, `dig` and `python3`, which GitHub's
 Ubuntu and macOS runners have.
