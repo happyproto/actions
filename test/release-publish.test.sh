@@ -241,7 +241,7 @@ test_semver_ordering() {
 test_a_fresh_publish_writes_project_manifest_version_channel_in_order() {
   stub_tools
   local out
-  out=$(run_publish CHANNELS="v2, latest" 2>&1) || fail "publish failed: $out"
+  out=$(run_publish CHANNELS="v2,latest" 2>&1) || fail "publish failed: $out"
   assert_eq "com.atproto.repo.createRecord software.release.project/happyview
 com.atproto.repo.createRecord software.release.manifest/$TID
 com.atproto.repo.createRecord software.release.version/happyview.2.17.4
@@ -396,6 +396,49 @@ test_a_lost_swap_race_fails() {
   out=$(run_publish 2>&1) && fail "expected failure"
   assert_contains "$out" "InvalidSwap: Record was at bafysomeoneelse"
   assert_eq 1 "$(jq -r 'select(.xrpc == "com.atproto.repo.putRecord") | .url' "$WORK/requests.jsonl" | grep -c .)" "attempts"
+}
+
+test_channels_take_commas_newlines_and_spaces_around_them() {
+  stub_tools
+  local out
+  out=$(run_publish CHANNELS=" v2 ,
+latest
+" DRY_RUN=true 2>&1) || fail "dry run failed: $out"
+  assert_contains "$out" "create          at://$DID/software.release.channel/happyview.v2  "
+  assert_contains "$out" "create          at://$DID/software.release.channel/happyview.latest  "
+}
+
+test_a_channel_on_an_unreadable_version_fails_without_writing() {
+  stub_tools
+  # The channel names a version record that is not in the repo.
+  seed_channel v2 2.18.0 bafychannelv2
+  local out
+  out=$(run_publish 2>&1) && fail "expected failure"
+  assert_contains "$out" "fail            at://$DID/software.release.channel/happyview.v2"
+  assert_contains "$out" "::error::the v2 channel (at://$DID/software.release.channel/happyview.v2) points at at://$DID/software.release.version/happyview.2.18.0, which is not a readable version record"
+  assert_contains "$out" "Fix it by hand"
+  assert_eq "" "$(writes)" "writes"
+  assert_eq bafychannelv2 "$(stored software.release.channel happyview.v2 | jq -r .cid)"
+}
+
+test_a_dry_run_reports_an_unreadable_channel_target_as_a_failure() {
+  stub_tools
+  seed_channel v2 2.18.0 bafychannelv2
+  local out
+  out=$(run_publish DRY_RUN=true PASSWORD= 2>&1) && fail "expected failure"
+  assert_contains "$out" "create          $VERSION_URI"
+  assert_contains "$out" "fail            at://$DID/software.release.channel/happyview.v2"
+  assert_contains "$out" "::error::1 record(s) can't be published as planned"
+}
+
+test_a_channel_on_a_version_that_is_not_semver_fails() {
+  stub_tools
+  seed_version banana bafyversionbanana
+  seed_channel v2 banana bafychannelv2
+  local out
+  out=$(run_publish 2>&1) && fail "expected failure"
+  assert_contains "$out" "whose version banana is not SemVer"
+  assert_eq "" "$(writes)" "writes"
 }
 
 test_no_channels_writes_no_channel() {

@@ -191,7 +191,11 @@ the GitHub release's `published_at`, never from the clock of the run.
 
 A channel never moves backwards: when it already points at a version that is
 newer by SemVer (`3.0.0` is newer than `3.0.0-beta.12`, `alpha.10` newer than
-`alpha.9`), it is left there with a notice.
+`alpha.9`), it is left there with a notice. If the version record a channel points at
+can't be read, or its version isn't SemVer, the action can't tell which is
+newer, so it fails naming the channel and that URI rather than risk moving it
+back. Fix the channel by hand (restore that version, point the channel at the
+right one, or delete the channel record so a rerun creates it), then rerun.
 
 Every record is read and planned before anything is written. If an immutable
 record differs from the plan, or a planned record holds a blob, the action
@@ -210,7 +214,7 @@ are no retries, so a rerun picks up where it stopped.
 | `tag` | `v<version>` | The git tag, recorded as `refs/tags/<tag>`. |
 | `changelog-url` | | Left out of the version record when empty. |
 | `published-at` | | Required unless `releases` is set. RFC 3339; gives the manifest's key. |
-| `channels` | | Channel names, comma or newline separated. Empty writes no channel. |
+| `channels` | | Channel names, comma or newline separated (`v2,latest` works), spaces around them ignored. Empty writes no channel. |
 | `releases` | | A path to a JSON file of releases to publish in one run; see [Many releases at once](#many-releases-at-once). |
 | `pace` | `2` | Seconds to wait between writes. Not used in a dry run. |
 | `dry-run` | `true` | Print every planned record and action (`create`, `skip`, `fail`, `move`, `skip-backwards`) from public reads, without signing in or writing. A planned `fail` fails the dry run too. |

@@ -391,34 +391,41 @@ plan() {
       note skip "$uri" "already at $VERSION"
       continue
     fi
-    # What the channel points at now, read from that version record.
+    # What the channel points at now, read from that version record. If that
+    # can't be read, its version is unknown, and moving the channel could take
+    # it backwards: that is a planned failure for a person to settle.
     current_version=""
+    target="${current_uri:-no version}"
     if [[ "$current_uri" =~ ^at://([^/]+)/([^/]+)/([^/]+)$ ]]; then
-      target=$current_uri
       get_record "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[1]}"
       if [[ "$found" == true ]]; then
         current_version=$(jq -r '.value.version // empty' <<<"$record")
       fi
-    else
-      target="${current_uri:-nothing}"
     fi
-    if [[ -n "$current_version" ]] && ! helper semver-check "$current_version" 2>/dev/null; then
-      die "the $channel channel points at $target, whose version $current_version is not SemVer; fix it by hand"
+    local problem=""
+    if [[ -z "$current_version" ]]; then
+      problem="points at $target, which is not a readable version record"
+    elif ! helper semver-check "$current_version" 2>/dev/null; then
+      problem="points at $target, whose version $current_version is not SemVer"
     fi
-    if [[ -n "$current_version" ]]; then
-      cmp=$(helper semver-cmp "$current_version" "$VERSION")
-      if [[ "$cmp" == 1 ]]; then
-        channel_actions+=(skip-backwards)
-        channel_swaps+=("")
-        note skip-backwards "$uri" "at $current_version, newer than $VERSION; left there"
-        continue
-      fi
-    else
-      echo "::warning::the $channel channel points at $target, which is not a readable version record; moving it to $VERSION"
+    if [[ -n "$problem" ]]; then
+      channel_actions+=(fail)
+      channel_swaps+=("")
+      failures=$((failures + 1))
+      note fail "$uri" "$problem"
+      echo "::error::the $channel channel ($uri) $problem, so the action can't tell whether $VERSION is newer and won't move it. Fix it by hand: restore $target, or point the channel at the right version with putRecord, or delete the channel record so a rerun creates it at $VERSION."
+      continue
+    fi
+    cmp=$(helper semver-cmp "$current_version" "$VERSION")
+    if [[ "$cmp" == 1 ]]; then
+      channel_actions+=(skip-backwards)
+      channel_swaps+=("")
+      note skip-backwards "$uri" "at $current_version, newer than $VERSION; left there"
+      continue
     fi
     channel_actions+=(move)
     channel_swaps+=("$current_cid")
-    note move "$uri" "${current_version:-?} -> $VERSION, swapping $current_cid"
+    note move "$uri" "$current_version -> $VERSION, swapping $current_cid"
     show "$(channel_record "$channel" "$version_uri" "${version_cid:-$PENDING_CID}")"
   done <<<"$channels"
 }
@@ -605,7 +612,7 @@ main() {
       summary '```'
       local done_note=""
       if ((i > 0)); then done_note=" (the $i release(s) before it are published: $written written, $skipped already there)"; fi
-      die "$VERSION: $((failures - before)) record(s) already published with different contents; stopped before writing anything for it$done_note"
+      die "$VERSION: $((failures - before)) record(s) can't be published as planned (see the fail lines above); stopped before writing anything for it$done_note"
     fi
     if [[ "$DRY_RUN" == true ]]; then
       if ((failures == before)) && planned_nothing; then skipped=$((skipped + 1)); fi
@@ -619,7 +626,7 @@ main() {
   summary '```'
 
   if ((failures > 0)); then
-    die "$failures record(s) already published with different contents"
+    die "$failures record(s) can't be published as planned; see the fail lines above"
   fi
   if [[ "$DRY_RUN" == true ]]; then echo "Dry run: nothing was written."; fi
   output version-uri "$version_uri"
