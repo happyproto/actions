@@ -14,6 +14,10 @@ inputs:
     description: stable, beta or alpha — which channel `latest` means. Ignored with an exact version.
     required: false
     default: stable
+  source:
+    description: installer (the release's binary, Linux and macOS) or npm (the `hpy` npm package; needs Node 22.20 or newer; any runner, Windows included).
+    required: false
+    default: installer
   credential:
     description: An HPY_CREDENTIAL from `hpy registry login --export`. Checked, never exported to later steps.
     required: false
@@ -42,6 +46,7 @@ runs:
       env:
         VERSION: ${{ inputs.version }}
         CHANNEL: ${{ inputs.channel }}
+        SOURCE: ${{ inputs.source }}
         CREDENTIAL: ${{ inputs.credential }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: '"$GITHUB_ACTION_PATH/setup.sh"'

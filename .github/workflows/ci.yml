@@ -60,6 +60,62 @@ jobs:
           test "${{ steps.bad-credential.outcome }}" = failure
           test "$(hpy --version)" = "hpy 1.0.0-alpha.2"
 
+  # An Alpine job container: hpy's musl build. TypeScript releases need
+  # libstdc++, which setup-hpy adds as root with apk.
+  setup-hpy-alpine:
+    needs: test
+    runs-on: depot-ubuntu-24.04
+    container: alpine:3.22
+    steps:
+      - run: apk add --no-cache bash curl jq git
+      - uses: actions/checkout@v4
+      - name: Latest on the beta channel
+        id: latest
+        uses: ./setup-hpy
+        with:
+          channel: beta
+      - shell: bash
+        env:
+          VERSION: ${{ steps.latest.outputs.version }}
+        run: test "$(hpy --version)" = "hpy $VERSION"
+
+  # `source: npm`, on Linux and Windows. The npm package `hpy` starts with the
+  # TypeScript hpy; until it has a release on the beta channel this checks
+  # nothing and says so.
+  setup-hpy-npm:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [depot-ubuntu-24.04, depot-windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Is hpy on npm yet?
+        id: npm
+        shell: bash
+        run: |
+          if v=$(npm view hpy@beta version 2>/dev/null) && [ -n "$v" ]; then
+            echo "version=$v" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::hpy has no beta on npm yet; skipping the npm source"
+          fi
+      - name: An exact version from npm
+        if: steps.npm.outputs.version != ''
+        id: exact
+        uses: ./setup-hpy
+        with:
+          version: ${{ steps.npm.outputs.version }}
+          source: npm
+      - if: steps.npm.outputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ steps.npm.outputs.version }}
+        run: test "$(hpy --version)" = "hpy $VERSION"
+
   plugin-publish:
     needs: test
     runs-on: depot-ubuntu-24.04

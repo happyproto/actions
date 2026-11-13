@@ -7,7 +7,7 @@
 #   stdin    GitHub's /repos/happyproto/cli/releases response; read only for
 #            `latest`
 #
-# Channels are strict, as in hpy itself (crates/hpy/src/channel.rs): a plain
+# Channels are strict, as in hpy itself (src/channel.ts in happyproto/cli): a plain
 # version is stable, `-beta.N` beta, `-alpha.N` alpha, anything else on no
 # channel, and `latest` never crosses channels.
 set -euo pipefail

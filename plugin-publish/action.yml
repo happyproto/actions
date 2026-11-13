@@ -44,6 +44,10 @@ inputs:
     description: Which channel `latest` means for hpy-version (setup-hpy's `channel`).
     required: false
     default: stable
+  hpy-source:
+    description: How to install hpy (setup-hpy's `source`), installer or npm.
+    required: false
+    default: installer
   github-token:
     description: Used only to look up hpy releases.
     required: false
@@ -73,6 +77,7 @@ runs:
       env:
         VERSION: ${{ inputs.hpy-version }}
         CHANNEL: ${{ inputs.hpy-channel }}
+        SOURCE: ${{ inputs.hpy-source }}
         CREDENTIAL: ${{ inputs.credential }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: '"$GITHUB_ACTION_PATH/../setup-hpy/setup.sh"'

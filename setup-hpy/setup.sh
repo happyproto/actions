@@ -5,14 +5,22 @@
 # Environment (setup-hpy's inputs):
 #   VERSION       an exact hpy version, or latest (default)
 #   CHANNEL       stable (default), beta or alpha: what latest means
+#   SOURCE        installer (default): the release's installer and binary;
+#                 npm: the npm package `hpy` (needs Node 22.20 or newer, and
+#                 works on Windows runners too)
 #   CREDENTIAL    optional HPY_CREDENTIAL; checked, never exported
 #   GITHUB_TOKEN  for the GitHub API call that resolves latest
 # Writes version, did and handle to $GITHUB_OUTPUT and hpy's directory to
 # $GITHUB_PATH.
 set -euo pipefail
 
-if [[ "${RUNNER_OS:-}" == Windows ]]; then
-  echo "::error::setup-hpy runs on Linux and macOS runners, not Windows"
+source="${SOURCE:-installer}"
+case "$source" in
+  installer | npm) ;;
+  *) echo "::error::\`$source\` is not a source; choose installer or npm"; exit 1 ;;
+esac
+if [[ "${RUNNER_OS:-}" == Windows && "$source" != npm ]]; then
+  echo "::error::on Windows runners, set \`source: npm\`: the installer runs on Linux and macOS"
   exit 1
 fi
 
@@ -34,18 +42,57 @@ else
   version=$("$here/resolve.sh" "$requested" "$channel" </dev/null)
 fi
 
-installer="$(mktemp)"
-trap 'rm -f "$installer"' EXIT
-url="https://github.com/$repo/releases/download/v$version/hpy-cli-installer.sh"
-if ! curl -fsSL --retry 3 -o "$installer" "$url"; then
-  echo "::error::hpy $version does not exist (no installer at $url)"
-  exit 1
-fi
-HPY_CLI_NO_MODIFY_PATH=1 sh "$installer" --quiet
+# hpy's musl build (Alpine job containers) needs libstdc++, and the installer
+# refuses it when it is missing. As root with apk, add it here instead.
+musl_runtime() {
+  [[ "$(uname -s)" == Linux ]] || return 0
+  # musl's ldd exits 1 for --version; pipefail must not take that as no match.
+  { ldd --version 2>&1 || true; } | grep -q musl || return 0
+  local d
+  for d in /usr/lib /lib /usr/local/lib; do
+    [[ -e "$d/libstdc++.so.6" ]] && return 0
+  done
+  if [[ "$(id -u)" == 0 ]] && command -v apk >/dev/null; then
+    echo "::notice::installing libstdc++, which hpy's musl build needs"
+    apk add --no-cache libstdc++ >/dev/null
+  fi
+}
 
-bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+from_installer() {
+  musl_runtime
+  installer="$(mktemp)"
+  trap 'rm -f "$installer"' EXIT
+  url="https://github.com/$repo/releases/download/v$version/hpy-cli-installer.sh"
+  if ! curl -fsSL --retry 3 -o "$installer" "$url"; then
+    echo "::error::hpy $version does not exist (no installer at $url)"
+    exit 1
+  fi
+  HPY_CLI_NO_MODIFY_PATH=1 sh "$installer" --quiet
+  bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+}
+
+from_npm() {
+  if ! command -v npm >/dev/null; then
+    echo "::error::\`source: npm\` needs Node 22.20 or newer and npm on PATH (actions/setup-node)"
+    exit 1
+  fi
+  if ! npm install -g --no-fund --no-audit "hpy@$version" >&2; then
+    echo "::error::could not install hpy $version from npm"
+    exit 1
+  fi
+  bin="$(npm prefix -g)"
+  # npm puts global commands in <prefix>/bin, except on Windows.
+  if [[ "${RUNNER_OS:-}" != Windows ]]; then bin="$bin/bin"; fi
+}
+
+if [[ "$source" == npm ]]; then from_npm; else from_installer; fi
 echo "$bin" >> "$GITHUB_PATH"
-export PATH="$bin:$PATH"
+if [[ "${RUNNER_OS:-}" == Windows ]]; then
+  PATH="$(cygpath -u "$bin"):$PATH"
+  export PATH
+else
+  export PATH="$bin:$PATH"
+fi
 
 export HPY_NO_UPDATE_CHECK=1
 installed=$(hpy --version)
