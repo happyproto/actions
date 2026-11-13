@@ -9,7 +9,7 @@ GitHub Actions for [HappyProto](https://happyproto.at).
 | [`lexicon-publish`](#lexicon-publish) | Publishes a directory of atproto lexicons so a PDS can resolve them. |
 | [`release-publish`](#release-publish) | Publishes a software release as `software.release.*` records in the publisher's own repo. |
 
-All of them run on Linux and macOS runners; `setup-hpy` and `plugin-publish` also run on Windows with `source: npm`. Pin the major version, e.g. `@v1`.
+All of them run on Linux and macOS runners; `setup-hpy` also runs on Windows with `source: npm`. Pin the major version, e.g. `@v1`.
 
 `hpy` has only prereleases so far, so the examples below set the channel to
 `beta`. Drop that once `hpy` 1.0.0 is out.

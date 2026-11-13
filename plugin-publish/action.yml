@@ -45,7 +45,7 @@ inputs:
     required: false
     default: stable
   hpy-source:
-    description: How to install hpy (setup-hpy's `source`), installer or npm.
+    description: How to install hpy (setup-hpy's `source`), installer or npm. Tested on Linux; not yet on Windows.
     required: false
     default: installer
   github-token:
