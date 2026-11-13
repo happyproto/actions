@@ -9,7 +9,7 @@ GitHub Actions for [HappyProto](https://happyproto.at).
 | [`lexicon-publish`](#lexicon-publish) | Publishes a directory of atproto lexicons so a PDS can resolve them. |
 | [`release-publish`](#release-publish) | Publishes a software release as `software.release.*` records in the publisher's own repo. |
 
-All of them run on Linux and macOS runners. Pin the major version, e.g. `@v1`.
+All of them run on Linux and macOS runners; `setup-hpy` also runs on Windows with `source: npm`. Pin the major version, e.g. `@v1`.
 
 `hpy` has only prereleases so far, so the examples below set the channel to
 `beta`. Drop that once `hpy` 1.0.0 is out.
@@ -40,10 +40,15 @@ HappyView dashboard. If it expires or is revoked, publishing fails with
 | --- | --- | --- |
 | `version` | `latest` | An exact version (`1.0.0-alpha.2`), or `latest`. |
 | `channel` | `stable` | `stable`, `beta` or `alpha`: which channel `latest` means. Channels are strict, as in `hpy` itself: `latest` on `alpha` is the newest alpha, never a newer stable. |
+| `source` | `installer` | `installer`: the release's own installer and binary (Linux and macOS). `npm`: the npm package `hpy`, which needs Node 22.20 or newer (`actions/setup-node`) and also runs on Windows. |
 | `credential` | | Optional. Checked (a malformed secret fails here), never exported to later steps. |
 | `github-token` | `github.token` | Only for looking up releases. |
 
 Outputs: `version`, and `did` and `handle` when a credential was given.
+
+In an Alpine job container, hpy's musl build needs `libstdc++` (from the
+TypeScript hpy on; earlier releases were static). Running as root, as job
+containers do, `setup-hpy` adds it with `apk`; otherwise install it first.
 
 ## `plugin-publish`
 
@@ -70,7 +75,7 @@ Installs `hpy` (as `setup-hpy` does) and publishes the plugin in
 | `wait` | `true` | Wait until the registry has copied the artifact. Still `pending` after two minutes is a warning, not a failure. |
 | `dry-run` | `false` | Validate and print the record without publishing. |
 | `skip-existing` | `true` | When the registry already has this version, succeed with a notice. Versions are immutable, so the existing one is not compared with this build. |
-| `hpy-version`, `hpy-channel` | `latest`, `stable` | Which `hpy` to use. |
+| `hpy-version`, `hpy-channel`, `hpy-source` | `latest`, `stable`, `installer` | Which `hpy` to use, and how to install it (`setup-hpy`'s `source`). |
 | `github-token` | `github.token` | Only for looking up `hpy` releases. |
 
 Outputs: `published` (`true`/`false`), `uri` (the version's AT URI, empty when
