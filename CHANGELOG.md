@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/happyproto/actions/compare/v1.4.0...v1.5.0) (2026-11-19)
+
+
+### Features
+
+* **setup-hpy:** install hpy from npm, and on Alpine add libstdc++ ([456dc51](https://github.com/happyproto/actions/commit/456dc512e9538d9c52af3736ab21973fe0b2700b))
+
 # [1.4.0](https://github.com/happyproto/actions/compare/v1.3.0...v1.4.0) (2026-11-12)
 
 
