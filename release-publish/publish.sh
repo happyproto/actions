@@ -229,7 +229,10 @@ get_record() {
   if ok; then
     found=true
     record=$body
-  elif [[ "$status" == 400 && "$(jq -r '.error // empty' <<<"$body" 2>/dev/null)" == RecordNotFound ]]; then
+  # A missing record is RecordNotFound. The reference PDS answers it with
+  # HTTP 400, other PDSes (Tranquil) with 404; either means absent.
+  elif [[ ( "$status" == 400 || "$status" == 404 ) \
+          && "$(jq -r '.error // empty' <<<"$body" 2>/dev/null)" == RecordNotFound ]]; then
     found=false
     record=""
   else

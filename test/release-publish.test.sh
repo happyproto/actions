@@ -100,7 +100,10 @@ if xrpc == "com.atproto.server.createSession":
 if xrpc == "com.atproto.repo.getRecord":
     p = path(query["repo"], query["collection"], query["rkey"])
     if not os.path.exists(p):
-        err(400, "RecordNotFound", "Could not locate record")
+        # The reference PDS answers 400; a PDS like Tranquil answers 404.
+        status_file = os.path.join(work, "not-found-status")
+        status = int(open(status_file).read()) if os.path.exists(status_file) else 400
+        err(status, "RecordNotFound", "Could not locate record")
     reply(200, open(p).read())
 
 if xrpc in ("com.atproto.repo.createRecord", "com.atproto.repo.putRecord"):
@@ -268,6 +271,37 @@ com.atproto.repo.createRecord software.release.channel/happyview.latest" "$(writ
   assert_eq "$VERSION_URI" "$(output_of version-uri)"
   assert_eq "$version_cid" "$(output_of version-cid)"
   assert_eq true "$(output_of published)"
+}
+
+test_a_pds_answering_not_found_with_404_is_published_to_as_with_400() {
+  stub_tools
+  echo 404 > "$WORK/not-found-status"
+  local out
+  out=$(run_publish CHANNELS="v2" 2>&1) || fail "publish failed: $out"
+  assert_eq "com.atproto.repo.createRecord software.release.project/happyview
+com.atproto.repo.createRecord software.release.manifest/$TID
+com.atproto.repo.createRecord software.release.version/happyview.2.17.4
+com.atproto.repo.createRecord software.release.channel/happyview.v2" "$(writes)" "writes"
+  assert_eq true "$(output_of published)"
+}
+
+test_a_dry_run_against_a_404_pds_plans_the_records() {
+  stub_tools
+  echo 404 > "$WORK/not-found-status"
+  local out
+  out=$(run_publish DRY_RUN=true PASSWORD= 2>&1) || fail "dry run failed: $out"
+  assert_contains "$out" "create          $MANIFEST_URI"
+  assert_contains "$out" "Dry run: nothing was written."
+}
+
+test_a_404_that_is_not_record_not_found_still_fails() {
+  stub_tools
+  printf '404\n{"error":"RepoNotFound","message":"Could not find repo"}' \
+    > "$WORK/fail/com.atproto.repo.getRecord"
+  local out
+  out=$(run_publish 2>&1) && fail "expected failure"
+  assert_contains "$out" "failed (HTTP 404, RepoNotFound"
+  assert_eq "" "$(writes)" "writes"
 }
 
 test_a_rerun_skips_everything() {
