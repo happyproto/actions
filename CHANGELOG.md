@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/happyproto/actions/compare/v1.5.0...v1.5.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **release-publish:** read RecordNotFound as absent whatever its HTTP status ([a6ea1fb](https://github.com/happyproto/actions/commit/a6ea1fbc8886be48ffa0589b4266c198932451dd))
+
 # [1.5.0](https://github.com/happyproto/actions/compare/v1.4.0...v1.5.0) (2026-11-19)
 
 
